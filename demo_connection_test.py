@@ -7,9 +7,6 @@ load_dotenv()
 
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 SSID = os.getenv("POCKET_OPTION_SSID", "").strip()
-EMAIL = os.getenv("POCKET_OPTION_EMAIL", "").strip()
-PASSWORD = os.getenv("POCKET_OPTION_PASSWORD", "").strip()
-ALLOW_EMAIL_LOGIN = os.getenv("ALLOW_EMAIL_LOGIN", "true").lower() == "true"
 SESSION_FILE = os.getenv("POCKET_OPTION_SESSION_FILE", os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"), "pocket_demo_ssid.txt"))
 
 def load_cached_ssid():
@@ -45,11 +42,6 @@ if not DEMO_ONLY:
 if SSID and not SSID.startswith("42["):
     raise RuntimeError(
         "POCKET_OPTION_SSID must be the full Pocket Option session string starting with 42[."
-    )
-
-if not SSID and (not EMAIL or not PASSWORD):
-    raise RuntimeError(
-        "Missing Pocket Option Demo authentication. Provide POCKET_OPTION_SSID or POCKET_OPTION_EMAIL + POCKET_OPTION_PASSWORD as GitHub Secrets."
     )
 
 if STAKE <= 0 or DURATION < 5 or MAX_TRADES < 1 or MAX_DAILY_LOSS <= 0:
@@ -94,27 +86,19 @@ def get_close(candle):
 
 print("DEMO ONLY: true")
 
-# Authentication order: explicit SSID, cached Railway session, then optional one-time login.
-if SSID:
-    print("AUTH: using Pocket Option Demo SSID (value hidden).")
-else:
-    cached = load_cached_ssid()
-    if cached:
-        SSID = cached
-        print("AUTH: using cached Demo session from persistent storage (value hidden).")
-    elif not ALLOW_EMAIL_LOGIN:
-        raise RuntimeError("No Demo session available. GitHub Actions no longer attempts browser login. Run on Railway with a persistent volume, or provide POCKET_OPTION_SSID as a secret.")
-    else:
-        if not EMAIL or not PASSWORD:
-            raise RuntimeError("No Demo session available. Configure Demo email/password for the one-time Railway bootstrap, or provide POCKET_OPTION_SSID.")
-        print("AUTH: bootstrapping Demo email/password login on the hosting service. Session value remains hidden.")
-        try:
-            from BinaryOptionsToolsV2.pocketoption.tools.login import login
-            SSID = login(EMAIL, PASSWORD, demo=True, backend="playwright", headless=True, timeout=60)
-            print("AUTH: email/password login succeeded; generated Demo session.")
-        except Exception as exc:
-            raise RuntimeError(f"Demo email/password login failed without bypassing site security: {exc}") from exc
+# Authentication is intentionally session-only.
+# Browser email/password login is disabled so the bot never attempts to bypass
+# Pocket Option site security or CAPTCHA challenges.
+if not SSID:
+    SSID = load_cached_ssid()
 
+if not SSID:
+    print("AUTH: no Demo SSID/session found.")
+    print("AUTH: browser email/password login is disabled.")
+    print("AUTH: add a valid Demo POCKET_OPTION_SSID, then redeploy.")
+    raise SystemExit(0)
+
+print("AUTH: using Demo session (value hidden).")
 save_cached_ssid(SSID)
 
 api = PocketOption(SSID)
