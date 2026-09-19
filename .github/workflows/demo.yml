@@ -11,15 +11,31 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check Demo authentication
+        env:
+          POCKET_OPTION_SSID: ${{ secrets.POCKET_OPTION_SSID }}
+          POCKET_OPTION_EMAIL: ${{ secrets.POCKET_OPTION_EMAIL }}
+          POCKET_OPTION_PASSWORD: ${{ secrets.POCKET_OPTION_PASSWORD }}
+        run: |
+          if [ -n "$POCKET_OPTION_SSID" ]; then
+            echo "AUTH MODE: Demo SSID"
+          elif [ -n "$POCKET_OPTION_EMAIL" ] && [ -n "$POCKET_OPTION_PASSWORD" ]; then
+            echo "AUTH MODE: Demo email/password"
+          else
+            echo "ERROR: Add Pocket Option Demo email/password or Demo SSID as GitHub Secrets."
+            exit 1
+          fi
+
       - name: Run demo bot
         env:
-          # GitHub Actions is separate from Railway.
-          # Use the same Pocket Option Demo email/password as GitHub Secrets.
-          # SSID is optional; the script can request a fresh Demo SSID.
           POCKET_OPTION_SSID: ${{ secrets.POCKET_OPTION_SSID }}
           POCKET_OPTION_EMAIL: ${{ secrets.POCKET_OPTION_EMAIL }}
           POCKET_OPTION_PASSWORD: ${{ secrets.POCKET_OPTION_PASSWORD }}
