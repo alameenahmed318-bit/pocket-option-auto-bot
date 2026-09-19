@@ -30,57 +30,62 @@ def auth_headers():
     }
 
 def get_demo_account_id():
+    # Deriv documents POST /accounts as the account setup endpoint:
+    # it returns the existing matching Demo account (200) or creates it (201).
+    # This avoids relying on GET when the API returns AccountNotFound/404.
     url = f"{API_BASE}/trading/v1/options/accounts"
-    r = requests.get(url, headers=auth_headers(), timeout=20)
+    payload = {
+        "currency": "USD",
+        "group": "row",
+        "account_type": "demo",
+    }
 
-    # Deriv's Options API normally returns the existing demo account here.
-    # If the account does not exist yet, create the demo Options account.
-    if r.status_code == 404:
-        print("No Options account returned by GET; creating/initializing Demo Options account...")
-        create = requests.post(
-            url,
-            headers=auth_headers(),
-            json={
-                "currency": "USD",
-                "group": "row",
-                "account_type": "demo",
-            },
-            timeout=20,
+    r = requests.post(
+        url,
+        headers=auth_headers(),
+        json=payload,
+        timeout=20,
+    )
+
+    if not r.ok:
+        detail = r.text
+        raise RuntimeError(
+            f"Deriv Demo Options account setup failed with HTTP {r.status_code}: {detail}"
         )
-        if not create.ok:
-            raise RuntimeError(
-                f"Deriv Options account lookup returned 404 and demo creation failed "
-                f"with HTTP {create.status_code}: {create.text}"
-            )
-        payload = create.json()
-        data = payload.get("data", [])
-    else:
-        if not r.ok:
-            raise RuntimeError(
-                f"Deriv Options account lookup failed with HTTP {r.status_code}: {r.text}"
-            )
-        data = r.json().get("data", [])
 
+    body = r.json()
+    data = body.get("data", [])
+
+    # API returns an object when the matching account already exists,
+    # and an array when a new account is created.
     if isinstance(data, dict):
-        data = [data]
+        accounts = [data]
+    elif isinstance(data, list):
+        accounts = data
+    else:
+        accounts = []
 
     demos = [
-        a for a in data
-        if str(a.get("account_type", "")).lower() == "demo"
+        account for account in accounts
+        if str(account.get("account_type", "")).lower() == "demo"
     ]
 
     if not demos:
-        raise RuntimeError(f"No Deriv Options demo account found. API response: {data}")
+        raise RuntimeError(
+            f"No Demo Options account was returned by Deriv. Response: {body}"
+        )
 
     active = [
-        a for a in demos
-        if str(a.get("status", "")).lower() == "active"
+        account for account in demos
+        if str(account.get("status", "")).lower() == "active"
     ]
     account = active[0] if active else demos[0]
 
     account_id = str(account.get("account_id", "")).strip()
     if not account_id:
-        raise RuntimeError(f"Demo account response has no account_id: {account}")
+        raise RuntimeError(
+            f"Deriv Demo account response has no account_id: {account}"
+        )
 
     print(
         f"Using Demo Options account: {account_id} | "
