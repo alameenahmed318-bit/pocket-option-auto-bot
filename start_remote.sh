@@ -7,7 +7,7 @@ export DISPLAY=:99
 Xvfb :99 -screen 0 392x844x24 -ac &
 sleep 2
 
-x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -localhost -noxdamage -wait 10 -defer 10 -ncache 0 -noxfixes -noxrecord &
+x11vnc -display :99 -forever -shared -rfbport 5901 -nopw -localhost -noxdamage -wait 10 -defer 10 -ncache 0 -noxfixes -noxrecord &
 
 # Fresh per-container VNC token.
 TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
@@ -43,7 +43,7 @@ websockify \
   --file-only \
   --token-plugin websockify.token_plugins.TokenFile \
   --token-source /tmp/websockify.tokens \
-  "8080" &
+  "${PORT}" &
 
 PORT=8090 python -u remote_login.py &
 exec python -u demo_connection_test.py
