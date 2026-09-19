@@ -6,4 +6,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "browser_demo_test.py"]
+# Build marker: 2026-09-19-login-timeout-fix
+CMD ["python", "-u", "browser_demo_test.py"]
