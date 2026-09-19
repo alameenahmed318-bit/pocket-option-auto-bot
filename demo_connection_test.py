@@ -20,6 +20,8 @@ if not DEMO_ONLY:
     raise RuntimeError("Safety stop: DEMO_ONLY must be true.")
 if not SSID:
     raise RuntimeError("Missing POCKET_OPTION_SSID in Railway Variables.")
+if not SSID.startswith("42["):
+    raise RuntimeError("POCKET_OPTION_SSID must be the full Pocket Option session string starting with 42[.")
 if STAKE <= 0 or DURATION < 5 or MAX_TRADES < 1 or MAX_DAILY_LOSS <= 0:
     raise RuntimeError("Invalid trading configuration.")
 
@@ -119,24 +121,23 @@ try:
 
         try:
             if action == "BUY/CALL":
-                deal = api.buy(ASSET, DURATION, STAKE)
+                trade_id, deal = api.buy(ASSET, STAKE, DURATION)
             else:
-                deal = api.sell(ASSET, DURATION, STAKE)
+                trade_id, deal = api.sell(ASSET, STAKE, DURATION)
 
             trades += 1
-            trade_id = getattr(deal, "id", None)
             print(
                 f"TRADE OPENED: id={trade_id}, action={action}, "
                 f"stake=${STAKE:.2f}, duration={DURATION}s"
             )
 
-            result = api.result(trade_id)
-            profit = float(getattr(result, "profit", 0) or 0)
+            result = api.check_win(trade_id)
+            profit = float(result.get("profit", 0) or 0)
             daily_pnl += profit
 
             print(
                 f"TRADE CLOSED: id={trade_id}, "
-                f"profit=${profit:.2f}"
+                f"result={result.get('result')}, profit=${profit:.2f}"
             )
             print(f"SESSION P/L: ${daily_pnl:.2f}; trades={trades}/{MAX_TRADES}")
 
