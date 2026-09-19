@@ -6,10 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
-EMAIL = os.getenv("POCKET_OPTION_EMAIL", "")
-PASSWORD = os.getenv("POCKET_OPTION_PASSWORD", "")
-BACKEND = os.getenv("PO_LOGIN_BACKEND", "playwright").lower()
-CAPSOLVER_KEY = os.getenv("CAPSOLVER_API_KEY", "")
+SSID = os.getenv("POCKET_OPTION_SSID", "").strip()
 
 ASSET = os.getenv("PO_ASSET", "EURUSD_otc")
 STAKE = float(os.getenv("STAKE", "1"))
@@ -21,13 +18,13 @@ COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "90"))
 
 if not DEMO_ONLY:
     raise RuntimeError("Safety stop: DEMO_ONLY must be true.")
-if not EMAIL or not PASSWORD:
-    raise RuntimeError("Missing POCKET_OPTION_EMAIL or POCKET_OPTION_PASSWORD in Railway Variables.")
+if not SSID:
+    raise RuntimeError("Missing POCKET_OPTION_SSID in Railway Variables.")
 if STAKE <= 0 or DURATION < 5 or MAX_TRADES < 1 or MAX_DAILY_LOSS <= 0:
     raise RuntimeError("Invalid trading configuration.")
 
-from BinaryOptionsToolsV2.pocketoption.tools.login import LoginError, login
 from BinaryOptionsToolsV2.pocketoption import PocketOption
+
 
 def ema(values, period):
     if len(values) < period:
@@ -37,6 +34,7 @@ def ema(values, period):
     for price in values[period:]:
         value = price * k + value * (1 - k)
     return value
+
 
 def rsi(values, period=14):
     if len(values) < period + 1:
@@ -53,36 +51,33 @@ def rsi(values, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
+
 def get_close(candle):
-    return float(candle.get("close", candle.get("close_price")))
+    if hasattr(candle, "close"):
+        return float(candle.close)
+    if isinstance(candle, dict):
+        return float(candle.get("close", candle.get("close_price")))
+    return float(candle["close"])
 
-print(f"LOGIN: starting Demo login using backend={BACKEND}")
 
-kwargs = {"demo": True, "backend": BACKEND, "headless": True, "timeout": 90}
-if BACKEND in {"capsolver", "2captcha", "nocaptchaai"}:
-    if not CAPSOLVER_KEY:
-        raise RuntimeError(f"PO_LOGIN_BACKEND={BACKEND} requires CAPSOLVER_API_KEY.")
-    kwargs["api_key"] = CAPSOLVER_KEY
+print("AUTH: using Pocket Option SSID from Railway Variables (value hidden).")
+print("DEMO ONLY: true")
+
+api = PocketOption(SSID)
 
 try:
-    ssid = login(EMAIL, PASSWORD, **kwargs)
-except (LoginError, ImportError, RuntimeError) as exc:
-    print(f"LOGIN FAILED: {exc}")
-    print("NO TRADE WAS PLACED.")
-    raise SystemExit(2) from exc
+    print("POCKET OPTION: connecting with SSID...")
+    time.sleep(2)
 
-if not ssid:
-    raise RuntimeError("Login returned an empty session.")
+    if not api.is_demo():
+        raise RuntimeError("Safety stop: supplied SSID is NOT a Demo account.")
 
-print("LOGIN: OK")
-print("SESSION: obtained; not printed.")
-
-api = PocketOption(ssid, is_demo=True)
-try:
-    print("POCKET OPTION: connecting to DEMO...")
     balance = api.balance()
     print(f"DEMO BALANCE: ${float(balance):.2f}")
-    print(f"BOT CONFIG: asset={ASSET}, stake=${STAKE:.2f}, duration={DURATION}s, max_trades={MAX_TRADES}")
+    print(
+        f"BOT CONFIG: asset={ASSET}, stake=${STAKE:.2f}, "
+        f"duration={DURATION}s, max_trades={MAX_TRADES}"
+    )
 
     daily_pnl = 0.0
     trades = 0
@@ -90,7 +85,7 @@ try:
     while trades < MAX_TRADES and daily_pnl > -MAX_DAILY_LOSS:
         try:
             candles = api.get_candles(ASSET, CANDLE_PERIOD, 60)
-            closes = [get_close(c) for c in candles if c.get("close") is not None]
+            closes = [get_close(c) for c in candles]
         except Exception as exc:
             print(f"MARKET DATA ERROR: {exc}")
             time.sleep(COOLDOWN)
@@ -113,7 +108,10 @@ try:
             action = None
 
         now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
-        print(f"{now} SIGNAL: EMA9={fast:.6f}, EMA21={slow:.6f}, RSI14={current_rsi:.2f}, action={action}")
+        print(
+            f"{now} SIGNAL: EMA9={fast:.6f}, EMA21={slow:.6f}, "
+            f"RSI14={current_rsi:.2f}, action={action}"
+        )
 
         if not action:
             time.sleep(COOLDOWN)
@@ -121,18 +119,25 @@ try:
 
         try:
             if action == "BUY/CALL":
-                trade_id, deal = api.buy(ASSET, STAKE, DURATION)
+                deal = api.buy(ASSET, DURATION, STAKE)
             else:
-                trade_id, deal = api.sell(ASSET, STAKE, DURATION)
+                deal = api.sell(ASSET, DURATION, STAKE)
 
             trades += 1
-            print(f"TRADE OPENED: id={trade_id}, action={action}, stake=${STAKE:.2f}, duration={DURATION}s")
+            trade_id = getattr(deal, "id", None)
+            print(
+                f"TRADE OPENED: id={trade_id}, action={action}, "
+                f"stake=${STAKE:.2f}, duration={DURATION}s"
+            )
 
-            result = api.check_win(trade_id)
-            profit = float(result.get("profit", 0))
+            result = api.result(trade_id)
+            profit = float(getattr(result, "profit", 0) or 0)
             daily_pnl += profit
 
-            print(f"TRADE CLOSED: id={trade_id}, result={result.get('result')}, profit=${profit:.2f}")
+            print(
+                f"TRADE CLOSED: id={trade_id}, "
+                f"profit=${profit:.2f}"
+            )
             print(f"SESSION P/L: ${daily_pnl:.2f}; trades={trades}/{MAX_TRADES}")
 
             if daily_pnl <= -MAX_DAILY_LOSS:
@@ -148,11 +153,9 @@ try:
 
     print("BOT STOPPED: safety limits reached or no valid signal.")
     print("DEMO ONLY: no real-money trade was permitted.")
+
 finally:
     try:
-        api.close()
+        api.shutdown()
     except Exception:
-        try:
-            api.shutdown()
-        except Exception:
-            pass
+        pass
