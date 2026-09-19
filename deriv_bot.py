@@ -8,7 +8,7 @@ API_BASE = "https://api.derivws.com"
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 TOKEN = os.getenv("DERIV_TOKEN", "").strip()
 APP_ID = os.getenv("DERIV_APP_ID", "").strip()
-SYMBOL = os.getenv("DERIV_SYMBOL", "frxEURUSD").strip()
+SYMBOL = os.getenv("DERIV_SYMBOL", "AUTO").strip()
 STAKE = float(os.getenv("STAKE_USD", "1"))
 DURATION = int(os.getenv("DURATION_SECONDS", "60"))
 MAX_TRADES = int(os.getenv("MAX_TRADES", "20"))
@@ -44,10 +44,7 @@ def get_demo_account_id():
             account = active[0] if active else demos[0]
             account_id = str(account.get("account_id", "")).strip()
             if account_id:
-                print(
-                    f"Using Demo Options account: {account_id} | "
-                    f"balance={account.get('balance')} {account.get('currency', '')}"
-                )
+                print(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
                 return account_id
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
 
@@ -65,10 +62,7 @@ def get_demo_account_id():
                     "Create a new Deriv PAT with BOTH trade and account_manage scopes, "
                     "then replace the GitHub Secret DERIV_TOKEN."
                 )
-            raise RuntimeError(
-                f"Deriv Demo Options account creation failed with "
-                f"HTTP {create.status_code}: {create.text}"
-            )
+            raise RuntimeError(f"Deriv Demo Options account creation failed with HTTP {create.status_code}: {create.text}")
         body = create.json()
         data = body.get("data", [])
         accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
@@ -79,10 +73,7 @@ def get_demo_account_id():
         account_id = str(account.get("account_id", "")).strip()
         if not account_id:
             raise RuntimeError(f"Demo account response has no account_id: {account}")
-        print(
-            f"Using Demo Options account: {account_id} | "
-            f"balance={account.get('balance')} {account.get('currency', '')}"
-        )
+        print(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
         return account_id
 
     if r.status_code == 403 and "scope" in r.text.lower():
@@ -91,10 +82,7 @@ def get_demo_account_id():
             "Create a new Deriv PAT with the trade scope and update DERIV_TOKEN."
         )
 
-    raise RuntimeError(
-        f"Deriv Demo Options account lookup failed with "
-        f"HTTP {r.status_code}: {r.text}"
-    )
+    raise RuntimeError(f"Deriv Demo Options account lookup failed with HTTP {r.status_code}: {r.text}")
 
 def get_ws_url(account_id):
     r = requests.post(
@@ -103,9 +91,7 @@ def get_ws_url(account_id):
         timeout=20,
     )
     if not r.ok:
-        raise RuntimeError(
-            f"Deriv OTP request failed with HTTP {r.status_code}: {r.text}"
-        )
+        raise RuntimeError(f"Deriv OTP request failed with HTTP {r.status_code}: {r.text}")
     url = r.json().get("data", {}).get("url")
     if not url:
         raise RuntimeError(f"No WebSocket URL returned: {r.text}")
@@ -113,9 +99,7 @@ def get_ws_url(account_id):
 
 class Client:
     def __init__(self, url):
-        self.ws = websocket.create_connection(
-            url, timeout=30, enable_multithread=True
-        )
+        self.ws = websocket.create_connection(url, timeout=30, enable_multithread=True)
         self.req_id = 0
 
     def send(self, payload):
@@ -142,9 +126,7 @@ class Client:
                 continue
             if msg.get("error"):
                 raise RuntimeError(msg["error"].get("message", str(msg["error"])))
-            if msg.get("req_id") == req_id and (
-                msg_type is None or msg.get("msg_type") == msg_type
-            ):
+            if msg.get("req_id") == req_id and (msg_type is None or msg.get("msg_type") == msg_type):
                 return msg
         raise TimeoutError(f"Timed out waiting for req_id={req_id}")
 
@@ -154,13 +136,42 @@ class Client:
         except Exception:
             pass
 
-def connect_and_subscribe(account_id):
+def connect(account_id):
     client = Client(get_ws_url(account_id))
     rid = client.send({"balance": 1})
     balance_msg = client.recv_for(rid, "balance")
     print("Connected:", balance_msg["balance"])
-    client.send({"ticks": SYMBOL, "subscribe": 1})
     return client
+
+def get_available_symbols(client):
+    # Deriv returns the currently active underlying markets. Asking for CALL/PUT
+    # support keeps the list compatible with this bot's digital-option strategy.
+    rid = client.send({
+        "active_symbols": "brief",
+        "contract_type": ["CALL", "PUT"],
+    })
+    msg = client.recv_for(rid, "active_symbols", timeout=30)
+    symbols = msg.get("active_symbols", [])
+
+    names = []
+    for item in symbols:
+        symbol = item.get("underlying_symbol") or item.get("symbol")
+        if not symbol:
+            continue
+        if item.get("is_trading_suspended") == 1:
+            continue
+        if item.get("exchange_is_open") == 0:
+            continue
+        names.append(symbol)
+
+    # If a specific symbol was requested, keep it only when it is currently open.
+    if SYMBOL and SYMBOL.upper() != "AUTO":
+        names = [s for s in names if s == SYMBOL]
+
+    # Stable order and no duplicates.
+    names = list(dict.fromkeys(names))
+    print(f"OPEN CALL/PUT SYMBOLS ({len(names)}): {', '.join(names[:80])}")
+    return names
 
 def ema(values, n):
     if len(values) < n:
@@ -187,9 +198,6 @@ def signal(prices):
     momentum = rsi(prices, 14)
     if fast is None or slow is None or momentum is None:
         return None, fast, slow, momentum
-
-    # Demo strategy: use the EMA trend with a wider RSI confirmation band
-    # so the bot can actually find valid CALL/PUT opportunities during a run.
     if fast > slow and 45 <= momentum <= 75:
         return "CALL", fast, slow, momentum
     if fast < slow and 25 <= momentum <= 55:
@@ -198,23 +206,20 @@ def signal(prices):
 
 def main():
     print(
-        f"DERIV DEMO BOT | {SYMBOL} | stake={STAKE} | "
+        f"DERIV DEMO BOT | symbols={SYMBOL} | stake={STAKE} | "
         f"duration={DURATION}s | DRY_RUN={DRY_RUN}"
     )
 
     account_id = get_demo_account_id()
     client = None
-    prices = deque(maxlen=120)
     trades = 0
     day_pnl = 0.0
     last_trade = 0.0
 
     try:
-        connected_once = False
         for attempt in range(1, 4):
             try:
-                client = connect_and_subscribe(account_id)
-                connected_once = True
+                client = connect(account_id)
                 break
             except (ConnectionError, websocket.WebSocketException) as exc:
                 print(f"Connection attempt {attempt}/3 failed: {exc}")
@@ -222,65 +227,87 @@ def main():
                     client.close()
                 if attempt < 3:
                     time.sleep(5)
-
-        if not connected_once:
+        else:
             raise RuntimeError("Could not establish a stable Deriv WebSocket connection.")
 
-        deadline = time.time() + 120
-        while time.time() < deadline and len(prices) < 40:
-            try:
-                msg = client.recv_json(timeout=30)
-            except ConnectionError as exc:
-                print(f"WebSocket closed while waiting for {SYMBOL}: {exc}")
-                print(f"NO TRADE: {SYMBOL} has no live tick stream right now (market closed/unavailable).")
-                return
-
-            if msg is None:
-                print(
-                    f"No {SYMBOL} tick received for 30s. "
-                    "The market may be closed or the symbol may be unavailable."
-                )
-                continue
-
-            if msg.get("msg_type") == "tick":
-                quote = msg.get("tick", {}).get("quote")
-                if quote is not None:
-                    prices.append(float(quote))
-
-        if len(prices) < 40:
-            print(
-                f"BOT STOPPED: only {len(prices)}/40 live ticks received for "
-                f"{SYMBOL}. No Demo contract was purchased."
-            )
+        symbols = get_available_symbols(client)
+        if not symbols:
+            print("NO OPEN CALL/PUT SYMBOLS: nothing to trade right now.")
             return
 
-        print("CONTINUOUS MODE: bot will keep scanning/trading until the GitHub job timeout.")
+        # Keep a small independent tick history for every open symbol.
+        histories = {symbol: deque(maxlen=120) for symbol in symbols}
+        subscribed = 0
+        for symbol in symbols:
+            try:
+                client.send({"ticks": symbol, "subscribe": 1})
+                subscribed += 1
+            except Exception as exc:
+                print(f"Could not subscribe to {symbol}: {exc}")
+
+        print(f"SUBSCRIBED TO {subscribed} SYMBOLS. Scanning all available markets.")
+
+        warmup_deadline = time.time() + 120
+        while time.time() < warmup_deadline and any(len(v) < 40 for v in histories.values()):
+            try:
+                msg = client.recv_json(timeout=30)
+            except ConnectionError:
+                print("WebSocket closed during market scan; reconnecting...")
+                client.close()
+                client = connect(account_id)
+                symbols = get_available_symbols(client)
+                histories = {symbol: deque(maxlen=120) for symbol in symbols}
+                for symbol in symbols:
+                    client.send({"ticks": symbol, "subscribe": 1})
+                continue
+
+            if not msg or msg.get("msg_type") != "tick":
+                continue
+            tick = msg.get("tick", {})
+            symbol = tick.get("symbol")
+            quote = tick.get("quote")
+            if symbol in histories and quote is not None:
+                histories[symbol].append(float(quote))
+
+        ready = [s for s, h in histories.items() if len(h) >= 40]
+        print(f"READY SYMBOLS ({len(ready)}): {', '.join(ready[:80])}")
+        if not ready:
+            print("BOT STOPPED: no active symbol supplied enough live ticks. No Demo contract was purchased.")
+            return
+
+        print("CONTINUOUS MODE: scanning every open supported symbol until 10 trades or the risk limit.")
         while trades < MAX_TRADES and day_pnl > -MAX_DAILY_LOSS:
             try:
                 msg = client.recv_json(timeout=30)
             except ConnectionError:
                 print("WebSocket closed. Reconnecting to continue Demo test...")
                 client.close()
-                client = connect_and_subscribe(account_id)
+                client = connect(account_id)
+                symbols = get_available_symbols(client)
+                histories = {symbol: deque(maxlen=120) for symbol in symbols}
+                for symbol in symbols:
+                    client.send({"ticks": symbol, "subscribe": 1})
                 continue
 
-            if msg is None:
-                print("WebSocket quiet for 30s; waiting for the next tick.")
-                continue
-            if msg.get("msg_type") != "tick":
+            if not msg or msg.get("msg_type") != "tick":
                 continue
 
-            quote = msg.get("tick", {}).get("quote")
-            if quote is None:
+            tick = msg.get("tick", {})
+            symbol = tick.get("symbol")
+            quote = tick.get("quote")
+            if symbol not in histories or quote is None:
                 continue
-            prices.append(float(quote))
+            histories[symbol].append(float(quote))
 
-            action, fast, slow, momentum = signal(list(prices))
-            if not action or time.time() - last_trade < COOLDOWN:
+            if time.time() - last_trade < COOLDOWN:
+                continue
+
+            action, fast, slow, momentum = signal(list(histories[symbol]))
+            if not action:
                 continue
 
             print(
-                f"SIGNAL {action} EMA9={fast:.6f} "
+                f"SIGNAL {symbol} {action} EMA9={fast:.6f} "
                 f"EMA21={slow:.6f} RSI14={momentum:.2f}"
             )
 
@@ -292,85 +319,78 @@ def main():
                 "currency": "USD",
                 "duration": DURATION,
                 "duration_unit": "s",
-                "underlying_symbol": SYMBOL,
+                "underlying_symbol": symbol,
             })
-            proposal = client.recv_for(rid, "proposal")["proposal"]
+            try:
+                proposal = client.recv_for(rid, "proposal", timeout=15)["proposal"]
+            except Exception as exc:
+                print(f"PROPOSAL FAILED {symbol} {action}: {exc}")
+                continue
+
             print(
-                f"PROPOSAL {action} ask={proposal['ask_price']} "
+                f"PROPOSAL {symbol} {action} ask={proposal['ask_price']} "
                 f"payout={proposal.get('payout')}"
             )
-
             last_trade = time.time()
 
             if DRY_RUN:
                 trades += 1
-                print(
-                    f"DRY_RUN=true: proposal only; no contract purchased. "
-                    f"Simulated test {trades}/{MAX_TRADES}."
-                )
+                print(f"DRY_RUN=true: proposal only; simulated test {trades}/{MAX_TRADES}.")
                 continue
 
             rid = client.send({
                 "buy": proposal["id"],
                 "price": float(proposal["ask_price"]),
             })
-            bought = client.recv_for(rid, "buy")["buy"]
+            try:
+                bought = client.recv_for(rid, "buy", timeout=15)["buy"]
+            except Exception as exc:
+                print(f"BUY FAILED {symbol} {action}: {exc}")
+                continue
+
             contract_id = bought["contract_id"]
             buy_time = time.time()
             buy_price = float(bought.get("buy_price", proposal.get("ask_price", STAKE)) or STAKE)
             trades += 1
-            print(
-                f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: "
-                f"{action} contract={contract_id}"
-            )
+            print(f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: {symbol} {action} contract={contract_id}")
 
             client.send({
                 "proposal_open_contract": 1,
                 "contract_id": contract_id,
                 "subscribe": 1,
             })
+
             while True:
                 try:
                     update = client.recv_json(timeout=30)
                 except ConnectionError:
                     print("WebSocket closed while monitoring contract. Reconnecting...")
                     client.close()
-                    client = connect_and_subscribe(account_id)
+                    client = connect(account_id)
                     continue
-                if update is None:
-                    print("WebSocket quiet while waiting for contract result; continuing.")
-                    continue
-                if update.get("msg_type") != "proposal_open_contract":
+                if not update or update.get("msg_type") != "proposal_open_contract":
                     continue
                 c = update.get("proposal_open_contract", {})
                 if str(c.get("contract_id")) != str(contract_id):
                     continue
+
                 if c.get("is_sold"):
                     pnl = float(c.get("profit", 0) or 0)
                     day_pnl += pnl
-                    print(f"CLOSED pnl={pnl:.2f} day_pnl={day_pnl:.2f}")
+                    print(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f}")
                     break
 
                 elapsed = time.time() - buy_time
                 profit = float(c.get("profit", 0) or 0)
                 if elapsed >= EARLY_PROFIT_SECONDS and profit > 0:
-                    print(
-                        f"EARLY TAKE PROFIT: +{profit:.2f} after {elapsed:.1f}s. "
-                        "Selling Demo contract now."
-                    )
-                    sell_rid = client.send({
-                        "sell": contract_id,
-                        "price": 0,
-                    })
+                    print(f"EARLY TAKE PROFIT: +{profit:.2f} after {elapsed:.1f}s. Selling Demo contract now.")
+                    sell_rid = client.send({"sell": contract_id, "price": 0})
                     try:
                         sold = client.recv_for(sell_rid, "sell", timeout=10)["sell"]
                         sold_for = float(sold.get("sold_for", buy_price) or buy_price)
                         pnl = sold_for - buy_price
                         day_pnl += pnl
-                        print(
-                            f"EARLY CLOSED pnl={pnl:.2f} sold_for={sold_for:.2f} "
-                            f"day_pnl={day_pnl:.2f}"
-                        )
+                        print(f"EARLY CLOSED {symbol} pnl={pnl:.2f} sold_for={sold_for:.2f} day_pnl={day_pnl:.2f}")
                     except Exception as exc:
                         print(f"EARLY SELL FAILED: {exc}. Waiting for normal expiry.")
                     break
