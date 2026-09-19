@@ -4,7 +4,7 @@ set -eu
 : "${REMOTE_LOGIN_PASSWORD:?Set REMOTE_LOGIN_PASSWORD in Railway Variables}"
 
 export DISPLAY=:99
-Xvfb :99 -screen 0 390x844x24 -ac &
+Xvfb :99 -screen 0 392x844x24 -ac &
 sleep 2
 
 x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -localhost -noxdamage -wait 10 -defer 10 -ncache 0 -noxfixes -noxrecord &
@@ -29,10 +29,9 @@ html,body{margin:0;width:100%;height:100%;background:#111;overflow:hidden}
 </head>
 <body>
 <div id="loading">Opening Pocket Option…</div>
-<iframe id="go" allow="clipboard-read; clipboard-write" src="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=websockify%3Ftoken%3D${TOKEN}"></iframe>
 <script>
-const f=document.getElementById('go');
-f.addEventListener('load',()=>setTimeout(()=>document.getElementById('loading').style.display='none',1200));
+const target="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=websockify%3Ftoken%3D${TOKEN}";
+location.replace(target);
 </script>
 </body>
 </html>
