@@ -7,6 +7,8 @@ load_dotenv()
 
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 SSID = os.getenv("POCKET_OPTION_SSID", "").strip()
+EMAIL = os.getenv("POCKET_OPTION_EMAIL", "").strip()
+PASSWORD = os.getenv("POCKET_OPTION_PASSWORD", "").strip()
 
 ASSET = os.getenv("PO_ASSET", "EURUSD_otc")
 STAKE = float(os.getenv("STAKE", "1"))
@@ -72,7 +74,18 @@ def get_close(candle):
 
 
 print("DEMO ONLY: true")
-print("AUTH: using Pocket Option Demo SSID (value hidden).")
+if SSID:
+    print("AUTH: using Pocket Option Demo SSID (value hidden).")
+else:
+    if not EMAIL or not PASSWORD:
+        raise RuntimeError("Missing Pocket Option Demo authentication. Provide POCKET_OPTION_SSID or POCKET_OPTION_EMAIL + POCKET_OPTION_PASSWORD as GitHub Secrets.")
+    print("AUTH: using Demo email/password login. Session value will remain hidden.")
+    try:
+        from BinaryOptionsToolsV2.pocketoption.tools.login import login
+        SSID = login(EMAIL, PASSWORD, demo=True, backend="playwright", headless=True, timeout=60)
+        print("AUTH: email/password login succeeded; generated Demo session.")
+    except Exception as exc:
+        raise RuntimeError(f"Demo email/password login failed without bypassing site security: {exc}") from exc
 
 api = PocketOption(SSID)
 
