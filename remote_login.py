@@ -4,7 +4,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler,HTTPServer
 from pathlib import Path
 
-PORT=int(os.getenv("PORT","8080"))
+PORT=int(os.getenv("BOT_HTTP_PORT","8081"))
 PASSWORD=os.getenv("REMOTE_LOGIN_PASSWORD","").strip()
 DEMO_ONLY=os.getenv("DEMO_ONLY","true").lower()=="true"
 STAKE=float(os.getenv("STAKE","1"))
@@ -112,15 +112,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path=="/health":
             self.send_response(200);self.end_headers();self.wfile.write(b"ok");return
-        if self.path=="/":
-            auth=self.headers.get("Authorization","")
-            expected="Basic "+base64.b64encode(("admin:"+PASSWORD).encode()).decode()
-            if not PASSWORD or auth!=expected:
-                self.send_response(401);self.send_header("WWW-Authenticate",'Basic realm="Pocket Option Demo Bot"');self.end_headers();return
-            body=b'''<!doctype html><meta name="viewport" content="width=device-width"><h2>Pocket Option Demo Bot</h2><p>Log in yourself and select Demo.</p><iframe src="/vnc/vnc.html?autoconnect=1&resize=scale" style="width:100%;height:80vh"></iframe>'''
-            self.send_response(200);self.send_header("Content-Type","text/html");self.end_headers();self.wfile.write(body);return
         self.send_response(404);self.end_headers()
     def log_message(self,*args):pass
 
 threading.Thread(target=launch,daemon=True).start()
-HTTPServer(("0.0.0.0",PORT),Handler).serve_forever()
+HTTPServer(("127.0.0.1",PORT),Handler).serve_forever()
