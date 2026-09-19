@@ -19,7 +19,7 @@ cat > /usr/share/novnc/index.html <<EOF
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="0; url=/vnc.html?autoconnect=1&resize=scale&path=websockify%3Ftoken%3D${TOKEN}">
+<meta http-equiv="refresh" content="0; url=/vnc.html?autoconnect=1&resize=scale&path=%2Fwebsockify%3Ftoken%3D${TOKEN}&scaleViewport=true&viewOnly=false">
 </head>
 <body>Opening secure noVNC...</body>
 </html>
@@ -31,7 +31,7 @@ websockify \
   --file-only \
   --token-plugin websockify.token_plugins.TokenFile \
   --token-source /tmp/websockify.tokens \
-  6080 &
+  6080 localhost:5900 &
 
 python -u remote_login.py &
 exec python -u demo_connection_test.py
