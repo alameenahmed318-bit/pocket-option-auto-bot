@@ -1,1 +1,2 @@
 python-dotenv>=1.0,<2
+git+https://github.com/ChipaDevTeam/BinaryOptionsTools-v2.git#subdirectory=python
