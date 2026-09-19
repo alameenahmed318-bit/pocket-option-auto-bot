@@ -30,68 +30,104 @@ def auth_headers():
     }
 
 def get_demo_account_id():
-    # Deriv documents POST /accounts as the account setup endpoint:
-    # it returns the existing matching Demo account (200) or creates it (201).
-    # This avoids relying on GET when the API returns AccountNotFound/404.
     url = f"{API_BASE}/trading/v1/options/accounts"
-    payload = {
-        "currency": "USD",
-        "group": "row",
-        "account_type": "demo",
-    }
 
-    r = requests.post(
+    # Prefer GET because it only needs the trade scope and can use
+    # an already-created Demo Options account.
+    r = requests.get(
         url,
         headers=auth_headers(),
-        json=payload,
         timeout=20,
     )
 
-    if not r.ok:
-        detail = r.text
-        raise RuntimeError(
-            f"Deriv Demo Options account setup failed with HTTP {r.status_code}: {detail}"
+    if r.ok:
+        body = r.json()
+        data = body.get("data", [])
+        if isinstance(data, dict):
+            accounts = [data]
+        elif isinstance(data, list):
+            accounts = data
+        else:
+            accounts = []
+
+        demos = [
+            account for account in accounts
+            if str(account.get("account_type", "")).lower() == "demo"
+        ]
+        if demos:
+            active = [
+                account for account in demos
+                if str(account.get("status", "")).lower() == "active"
+            ]
+            account = active[0] if active else demos[0]
+            account_id = str(account.get("account_id", "")).strip()
+            if account_id:
+                print(
+                    f"Using Demo Options account: {account_id} | "
+                    f"balance={account.get('balance')} {account.get('currency', '')}"
+                )
+                return account_id
+
+        raise RuntimeError(f"No active Demo Options account was returned: {body}")
+
+    # If no Options account exists yet, Deriv requires account_manage
+    # permission to create one. Only attempt creation after a 404.
+    if r.status_code == 404:
+        payload = {
+            "currency": "USD",
+            "group": "row",
+            "account_type": "demo",
+        }
+        create = requests.post(
+            url,
+            headers=auth_headers(),
+            json=payload,
+            timeout=20,
         )
 
-    body = r.json()
-    data = body.get("data", [])
+        if not create.ok:
+            if create.status_code == 403 and "scope" in create.text.lower():
+                raise RuntimeError(
+                    "Deriv token is missing the account_manage scope. "
+                    "Create a new Deriv PAT with BOTH trade and account_manage "
+                    "scopes, then replace the GitHub Secret DERIV_TOKEN."
+                )
+            raise RuntimeError(
+                f"Deriv Demo Options account creation failed with "
+                f"HTTP {create.status_code}: {create.text}"
+            )
 
-    # API returns an object when the matching account already exists,
-    # and an array when a new account is created.
-    if isinstance(data, dict):
-        accounts = [data]
-    elif isinstance(data, list):
-        accounts = data
-    else:
-        accounts = []
+        body = create.json()
+        data = body.get("data", [])
+        accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+        demos = [
+            account for account in accounts
+            if str(account.get("account_type", "")).lower() == "demo"
+        ]
+        if not demos:
+            raise RuntimeError(f"No Demo Options account was returned: {body}")
 
-    demos = [
-        account for account in accounts
-        if str(account.get("account_type", "")).lower() == "demo"
-    ]
+        account = demos[0]
+        account_id = str(account.get("account_id", "")).strip()
+        if not account_id:
+            raise RuntimeError(f"Demo account response has no account_id: {account}")
 
-    if not demos:
+        print(
+            f"Using Demo Options account: {account_id} | "
+            f"balance={account.get('balance')} {account.get('currency', '')}"
+        )
+        return account_id
+
+    if r.status_code == 403 and "scope" in r.text.lower():
         raise RuntimeError(
-            f"No Demo Options account was returned by Deriv. Response: {body}"
+            "Deriv token is missing the trade scope. "
+            "Create a new Deriv PAT with the trade scope and update DERIV_TOKEN."
         )
 
-    active = [
-        account for account in demos
-        if str(account.get("status", "")).lower() == "active"
-    ]
-    account = active[0] if active else demos[0]
-
-    account_id = str(account.get("account_id", "")).strip()
-    if not account_id:
-        raise RuntimeError(
-            f"Deriv Demo account response has no account_id: {account}"
-        )
-
-    print(
-        f"Using Demo Options account: {account_id} | "
-        f"balance={account.get('balance')} {account.get('currency', '')}"
+    raise RuntimeError(
+        f"Deriv Demo Options account lookup failed with "
+        f"HTTP {r.status_code}: {r.text}"
     )
-    return account_id
 
 def get_ws_url(account_id):
     r = requests.post(
