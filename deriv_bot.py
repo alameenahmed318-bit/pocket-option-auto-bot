@@ -25,27 +25,67 @@ def auth_headers():
     return {
         "Authorization": f"Bearer {TOKEN}",
         "Deriv-App-ID": APP_ID,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
     }
 
 def get_demo_account_id():
-    r = requests.get(
-        f"{API_BASE}/trading/v1/options/accounts",
-        headers=auth_headers(),
-        timeout=20,
-    )
-    r.raise_for_status()
-    data = r.json().get("data", [])
+    url = f"{API_BASE}/trading/v1/options/accounts"
+    r = requests.get(url, headers=auth_headers(), timeout=20)
+
+    # Deriv's Options API normally returns the existing demo account here.
+    # If the account does not exist yet, create the demo Options account.
+    if r.status_code == 404:
+        print("No Options account returned by GET; creating/initializing Demo Options account...")
+        create = requests.post(
+            url,
+            headers=auth_headers(),
+            json={
+                "currency": "USD",
+                "group": "row",
+                "account_type": "demo",
+            },
+            timeout=20,
+        )
+        if not create.ok:
+            raise RuntimeError(
+                f"Deriv Options account lookup returned 404 and demo creation failed "
+                f"with HTTP {create.status_code}: {create.text}"
+            )
+        payload = create.json()
+        data = payload.get("data", [])
+    else:
+        if not r.ok:
+            raise RuntimeError(
+                f"Deriv Options account lookup failed with HTTP {r.status_code}: {r.text}"
+            )
+        data = r.json().get("data", [])
+
     if isinstance(data, dict):
         data = [data]
-    demos = [a for a in data if str(a.get("account_type", "")).lower() == "demo"]
+
+    demos = [
+        a for a in data
+        if str(a.get("account_type", "")).lower() == "demo"
+    ]
+
     if not demos:
-        raise RuntimeError("No Deriv Options demo account found.")
-    active = [a for a in demos if str(a.get("status", "")).lower() == "active"]
+        raise RuntimeError(f"No Deriv Options demo account found. API response: {data}")
+
+    active = [
+        a for a in demos
+        if str(a.get("status", "")).lower() == "active"
+    ]
     account = active[0] if active else demos[0]
+
     account_id = str(account.get("account_id", "")).strip()
     if not account_id:
         raise RuntimeError(f"Demo account response has no account_id: {account}")
-    print(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency','')}")
+
+    print(
+        f"Using Demo Options account: {account_id} | "
+        f"balance={account.get('balance')} {account.get('currency', '')}"
+    )
     return account_id
 
 def get_ws_url(account_id):
@@ -54,7 +94,10 @@ def get_ws_url(account_id):
         headers=auth_headers(),
         timeout=20,
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise RuntimeError(
+            f"Deriv OTP request failed with HTTP {r.status_code}: {r.text}"
+        )
     url = r.json().get("data", {}).get("url")
     if not url:
         raise RuntimeError(f"No WebSocket URL returned: {r.text}")
@@ -78,7 +121,9 @@ class Client:
             msg = json.loads(self.ws.recv())
             if msg.get("error"):
                 raise RuntimeError(msg["error"].get("message", str(msg["error"])))
-            if msg.get("req_id") == req_id and (msg_type is None or msg.get("msg_type") == msg_type):
+            if msg.get("req_id") == req_id and (
+                msg_type is None or msg.get("msg_type") == msg_type
+            ):
                 return msg
         raise TimeoutError(f"Timed out waiting for req_id={req_id}")
 
@@ -120,7 +165,10 @@ def signal(prices):
     return None, fast, slow, momentum
 
 def main():
-    print(f"DERIV DEMO BOT | {SYMBOL} | stake={STAKE} | duration={DURATION}s | DRY_RUN={DRY_RUN}")
+    print(
+        f"DERIV DEMO BOT | {SYMBOL} | stake={STAKE} | "
+        f"duration={DURATION}s | DRY_RUN={DRY_RUN}"
+    )
     account_id = get_demo_account_id()
     client = Client(get_ws_url(account_id))
     prices = deque(maxlen=120)
@@ -157,7 +205,10 @@ def main():
             if not action or time.time() - last_trade < COOLDOWN:
                 continue
 
-            print(f"SIGNAL {action} EMA9={fast:.6f} EMA21={slow:.6f} RSI14={momentum:.2f}")
+            print(
+                f"SIGNAL {action} EMA9={fast:.6f} "
+                f"EMA21={slow:.6f} RSI14={momentum:.2f}"
+            )
 
             rid = client.send({
                 "proposal": 1,
@@ -170,18 +221,27 @@ def main():
                 "underlying_symbol": SYMBOL,
             })
             proposal = client.recv_for(rid, "proposal")["proposal"]
-            print(f"PROPOSAL {action} ask={proposal['ask_price']} payout={proposal.get('payout')}")
+            print(
+                f"PROPOSAL {action} ask={proposal['ask_price']} "
+                f"payout={proposal.get('payout')}"
+            )
 
             last_trade = time.time()
             if DRY_RUN:
                 print("DRY_RUN=true: proposal only; no contract purchased.")
                 continue
 
-            rid = client.send({"buy": proposal["id"], "price": float(proposal["ask_price"])})
+            rid = client.send({
+                "buy": proposal["id"],
+                "price": float(proposal["ask_price"]),
+            })
             bought = client.recv_for(rid, "buy")["buy"]
             contract_id = bought["contract_id"]
             trades += 1
-            print(f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: {action} contract={contract_id}")
+            print(
+                f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: "
+                f"{action} contract={contract_id}"
+            )
 
             client.send({
                 "proposal_open_contract": 1,
