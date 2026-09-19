@@ -24,7 +24,7 @@ cat > /usr/share/novnc/index.html <<EOF
 EOF
 
 # websockify serves noVNC and proxies WebSocket traffic internally.
-websockify --web=/usr/share/novnc/ --file-only   --token-plugin websockify.token_plugins.TokenFile   --token-source /tmp/websockify.tokens   127.0.0.1:8080 &
+websockify --web=/usr/share/novnc/ --file-only   --token-plugin websockify.token_plugins.TokenFile   --token-source /tmp/websockify.tokens   127.0.0.1:6080 &
 
 # Protect the public Railway endpoint with the existing Railway password.
 HASH="$(openssl passwd -apr1 "$REMOTE_LOGIN_PASSWORD")"
@@ -39,16 +39,16 @@ server {
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location /websockify {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:6080;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
+        proxy_set_header Host \$host;
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
+        proxy_pass http://127.0.0.1:6080;
+        proxy_set_header Host \$host;
     }
 }
 EOF
