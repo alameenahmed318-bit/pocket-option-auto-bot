@@ -30,8 +30,7 @@ html,body{margin:0;width:100%;height:100%;background:#111;overflow:hidden}
 <body>
 <div id="loading">Opening Pocket Option…</div>
 <script>
-const ws = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/websockify?token=" + encodeURIComponent("${TOKEN}");
-const target="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=" + encodeURIComponent(ws);
+const target="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=websockify%3Ftoken%3D${TOKEN}";
 location.replace(target);
 </script>
 </body>
