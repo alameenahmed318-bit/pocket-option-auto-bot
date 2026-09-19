@@ -4,17 +4,17 @@ set -eu
 : "${REMOTE_LOGIN_PASSWORD:?Set REMOTE_LOGIN_PASSWORD in Railway Variables}"
 
 export DISPLAY=:99
-Xvfb :99 -screen 0 390x844x24 -ac &
+Xvfb :99 -screen 0 390x844x24 -ac +extension GLX +extension RANDR &
+sleep 3
+
+# Share the X display. -noshm avoids shared-memory issues that can produce a black VNC canvas on Xvfb.
+x11vnc -display :99 -forever -shared -rfbport 5901 -nopw -localhost -noshm -noxdamage -noxfixes -noxrecord -wait 10 -defer 10 -ncache 0 &
+
 sleep 2
 
-x11vnc -display :99 -forever -shared -rfbport 5901 -nopw -localhost -noxdamage -wait 10 -defer 10 -ncache 0 -noxfixes -noxrecord &
-
-# Fresh per-container VNC token.
 TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
 printf '%s: localhost:5901\n' "$TOKEN" > /tmp/websockify.tokens
 
-# Direct mobile launcher: open Pocket Option's remote browser screen immediately.
-# noVNC remains the transport/UI layer, but the user never sees its landing page.
 cat > /usr/share/novnc/index.html <<EOF
 <!doctype html>
 <html>
@@ -23,21 +23,19 @@ cat > /usr/share/novnc/index.html <<EOF
 <meta name="theme-color" content="#111111">
 <style>
 html,body{margin:0;width:100%;height:100%;background:#111;overflow:hidden}
-#go{position:fixed;inset:0;width:100%;height:100%;border:0}
 #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:600 16px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:#111;z-index:2}
 </style>
 </head>
 <body>
 <div id="loading">Opening Pocket Option…</div>
 <script>
-const target="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=websockify%3Ftoken%3D${TOKEN}";
+const target="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=websockify%3Ftoken%3D${TOKEN}&logging=debug";
 location.replace(target);
 </script>
 </body>
 </html>
 EOF
 
-# Protect the VNC WebSocket with a fresh token and disable directory listings.
 websockify \
   --web=/usr/share/novnc/ \
   --file-only \
