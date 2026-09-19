@@ -186,9 +186,12 @@ def signal(prices):
     momentum = rsi(prices, 14)
     if fast is None or slow is None or momentum is None:
         return None, fast, slow, momentum
-    if fast > slow and 50 <= momentum <= 70:
+
+    # Demo strategy: use the EMA trend with a wider RSI confirmation band
+    # so the bot can actually find valid CALL/PUT opportunities during a run.
+    if fast > slow and 45 <= momentum <= 75:
         return "CALL", fast, slow, momentum
-    if fast < slow and 30 <= momentum <= 50:
+    if fast < slow and 25 <= momentum <= 55:
         return "PUT", fast, slow, momentum
     return None, fast, slow, momentum
 
@@ -206,8 +209,6 @@ def main():
     last_trade = 0.0
 
     try:
-        # The requested symbol may be unavailable when its market is closed.
-        # Reconnect a few times if Deriv closes the socket.
         connected_once = False
         for attempt in range(1, 4):
             try:
@@ -224,8 +225,6 @@ def main():
         if not connected_once:
             raise RuntimeError("Could not establish a stable Deriv WebSocket connection.")
 
-        # Collect enough ticks for EMA/RSI. If the market is closed/unavailable,
-        # finish cleanly instead of failing the GitHub Actions job.
         deadline = time.time() + 120
         while time.time() < deadline and len(prices) < 40:
             try:
