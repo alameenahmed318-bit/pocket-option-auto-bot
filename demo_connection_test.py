@@ -81,8 +81,8 @@ api = PocketOption(ssid, is_demo=True)
 try:
     print("POCKET OPTION: connecting to DEMO...")
     balance = api.balance()
-    print(f"DEMO BALANCE: $\{float(balance):.2f}")
-    print(f"BOT CONFIG: asset=\{ASSET}, stake=$\{STAKE:.2f}, duration=\{DURATION}s, max_trades=\{MAX_TRADES}")
+    print(f"DEMO BALANCE: ${float(balance):.2f}")
+    print(f"BOT CONFIG: asset={ASSET}, stake=${STAKE:.2f}, duration={DURATION}s, max_trades={MAX_TRADES}")
 
     daily_pnl = 0.0
     trades = 0
@@ -92,12 +92,12 @@ try:
             candles = api.get_candles(ASSET, CANDLE_PERIOD, 60)
             closes = [get_close(c) for c in candles if c.get("close") is not None]
         except Exception as exc:
-            print(f"MARKET DATA ERROR: \{exc}")
+            print(f"MARKET DATA ERROR: {exc}")
             time.sleep(COOLDOWN)
             continue
 
         if len(closes) < 30:
-            print(f"WAITING: not enough candles (\{len(closes)}/30).")
+            print(f"WAITING: not enough candles ({len(closes)}/30).")
             time.sleep(COOLDOWN)
             continue
 
@@ -113,7 +113,7 @@ try:
             action = None
 
         now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
-        print(f"\{now} SIGNAL: EMA9=\{fast:.6f}, EMA21=\{slow:.6f}, RSI14=\{current_rsi:.2f}, action=\{action}")
+        print(f"{now} SIGNAL: EMA9={fast:.6f}, EMA21={slow:.6f}, RSI14={current_rsi:.2f}, action={action}")
 
         if not action:
             time.sleep(COOLDOWN)
@@ -126,21 +126,21 @@ try:
                 trade_id, deal = api.sell(ASSET, STAKE, DURATION)
 
             trades += 1
-            print(f"TRADE OPENED: id=\{trade_id}, action=\{action}, stake=$\{STAKE:.2f}, duration=\{DURATION}s")
+            print(f"TRADE OPENED: id={trade_id}, action={action}, stake=${STAKE:.2f}, duration={DURATION}s")
 
             result = api.check_win(trade_id)
             profit = float(result.get("profit", 0))
             daily_pnl += profit
 
-            print(f"TRADE CLOSED: id=\{trade_id}, result=\{result.get('result')}, profit=$\{profit:.2f}")
-            print(f"SESSION P/L: $\{daily_pnl:.2f}; trades=\{trades}/\{MAX_TRADES}")
+            print(f"TRADE CLOSED: id={trade_id}, result={result.get('result')}, profit=${profit:.2f}")
+            print(f"SESSION P/L: ${daily_pnl:.2f}; trades={trades}/{MAX_TRADES}")
 
             if daily_pnl <= -MAX_DAILY_LOSS:
                 print("AUTO-STOP: daily loss limit reached.")
                 break
 
         except Exception as exc:
-            print(f"TRADE ERROR: \{exc}")
+            print(f"TRADE ERROR: {exc}")
             time.sleep(COOLDOWN)
             continue
 
