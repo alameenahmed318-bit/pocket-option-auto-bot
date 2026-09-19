@@ -44,7 +44,7 @@ websockify \
   --file-only \
   --token-plugin websockify.token_plugins.TokenFile \
   --token-source /tmp/websockify.tokens \
-  6080 localhost:5900 &
+  "${PORT:-6080}" localhost:5900 &
 
-python -u remote_login.py &
+PORT=8090 python -u remote_login.py &
 exec python -u demo_connection_test.py
