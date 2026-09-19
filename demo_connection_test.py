@@ -21,16 +21,14 @@ COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "90"))
 if not DEMO_ONLY:
     raise RuntimeError("Safety stop: DEMO_ONLY must be true.")
 
-if not SSID:
-    raise RuntimeError(
-        "Missing POCKET_OPTION_SSID. Browser email/password login is disabled "
-        "because GitHub Actions cannot reliably reach Pocket Option's login page. "
-        "Provide a valid Pocket Option Demo SSID as a secret."
-    )
-
-if not SSID.startswith("42["):
+if SSID and not SSID.startswith("42["):
     raise RuntimeError(
         "POCKET_OPTION_SSID must be the full Pocket Option session string starting with 42[."
+    )
+
+if not SSID and (not EMAIL or not PASSWORD):
+    raise RuntimeError(
+        "Missing Pocket Option Demo authentication. Provide POCKET_OPTION_SSID or POCKET_OPTION_EMAIL + POCKET_OPTION_PASSWORD as GitHub Secrets."
     )
 
 if STAKE <= 0 or DURATION < 5 or MAX_TRADES < 1 or MAX_DAILY_LOSS <= 0:
@@ -74,11 +72,10 @@ def get_close(candle):
 
 
 print("DEMO ONLY: true")
+
 if SSID:
     print("AUTH: using Pocket Option Demo SSID (value hidden).")
 else:
-    if not EMAIL or not PASSWORD:
-        raise RuntimeError("Missing Pocket Option Demo authentication. Provide POCKET_OPTION_SSID or POCKET_OPTION_EMAIL + POCKET_OPTION_PASSWORD as GitHub Secrets.")
     print("AUTH: using Demo email/password login. Session value will remain hidden.")
     try:
         from BinaryOptionsToolsV2.pocketoption.tools.login import login
