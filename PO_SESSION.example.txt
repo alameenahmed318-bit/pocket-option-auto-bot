@@ -1,0 +1,1 @@
+42["auth",{"session":"YOUR_DEMO_SESSION","isDemo":1,"uid":YOUR_UID,"platform":2}]
