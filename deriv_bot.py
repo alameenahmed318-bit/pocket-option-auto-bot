@@ -31,14 +31,7 @@ def auth_headers():
 
 def get_demo_account_id():
     url = f"{API_BASE}/trading/v1/options/accounts"
-
-    # Prefer GET because it only needs the trade scope and can use
-    # an already-created Demo Options account.
-    r = requests.get(
-        url,
-        headers=auth_headers(),
-        timeout=20,
-    )
+    r = requests.get(url, headers=auth_headers(), timeout=20)
 
     if r.ok:
         body = r.json()
@@ -70,8 +63,6 @@ def get_demo_account_id():
 
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
 
-    # If no Options account exists yet, Deriv requires account_manage
-    # permission to create one. Only attempt creation after a 404.
     if r.status_code == 404:
         payload = {
             "currency": "USD",
@@ -79,10 +70,7 @@ def get_demo_account_id():
             "account_type": "demo",
         }
         create = requests.post(
-            url,
-            headers=auth_headers(),
-            json=payload,
-            timeout=20,
+            url, headers=auth_headers(), json=payload, timeout=20
         )
 
         if not create.ok:
@@ -146,7 +134,11 @@ def get_ws_url(account_id):
 
 class Client:
     def __init__(self, url):
-        self.ws = websocket.create_connection(url, timeout=20)
+        self.ws = websocket.create_connection(
+            url,
+            timeout=30,
+            enable_multithread=True,
+        )
         self.req_id = 0
 
     def send(self, payload):
@@ -155,11 +147,20 @@ class Client:
         self.ws.send(json.dumps(payload))
         return self.req_id
 
-    def recv_for(self, req_id, msg_type=None, timeout=20):
+    def recv_json(self, timeout=30):
+        self.ws.settimeout(timeout)
+        try:
+            return json.loads(self.ws.recv())
+        except websocket.WebSocketTimeoutException:
+            return None
+
+    def recv_for(self, req_id, msg_type=None, timeout=30):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            self.ws.settimeout(max(1, deadline - time.time()))
-            msg = json.loads(self.ws.recv())
+            remaining = max(1, deadline - time.time())
+            msg = self.recv_json(timeout=remaining)
+            if msg is None:
+                continue
             if msg.get("error"):
                 raise RuntimeError(msg["error"].get("message", str(msg["error"])))
             if msg.get("req_id") == req_id and (
@@ -219,12 +220,16 @@ def main():
 
     try:
         rid = client.send({"balance": 1})
-        print("Connected:", client.recv_for(rid, "balance")["balance"])
+        balance_msg = client.recv_for(rid, "balance")
+        print("Connected:", balance_msg["balance"])
 
         client.send({"ticks": SYMBOL, "subscribe": 1})
         deadline = time.time() + 120
         while time.time() < deadline and len(prices) < 40:
-            msg = json.loads(client.ws.recv())
+            msg = client.recv_json(timeout=30)
+            if msg is None:
+                print("WebSocket quiet for 30s while collecting ticks; still connected.")
+                continue
             if msg.get("msg_type") == "tick":
                 quote = msg.get("tick", {}).get("quote")
                 if quote is not None:
@@ -234,9 +239,13 @@ def main():
             raise RuntimeError("Not enough tick data to start.")
 
         while trades < MAX_TRADES and day_pnl > -MAX_DAILY_LOSS:
-            msg = json.loads(client.ws.recv())
+            msg = client.recv_json(timeout=30)
+            if msg is None:
+                print("WebSocket quiet for 30s; waiting for the next tick.")
+                continue
             if msg.get("msg_type") != "tick":
                 continue
+
             quote = msg.get("tick", {}).get("quote")
             if quote is None:
                 continue
@@ -268,8 +277,13 @@ def main():
             )
 
             last_trade = time.time()
+
             if DRY_RUN:
-                print("DRY_RUN=true: proposal only; no contract purchased.")
+                trades += 1
+                print(
+                    f"DRY_RUN=true: proposal only; no contract purchased. "
+                    f"Simulated test {trades}/{MAX_TRADES}."
+                )
                 continue
 
             rid = client.send({
@@ -290,7 +304,10 @@ def main():
                 "subscribe": 1,
             })
             while True:
-                update = json.loads(client.ws.recv())
+                update = client.recv_json(timeout=30)
+                if update is None:
+                    print("WebSocket quiet while waiting for contract result; continuing.")
+                    continue
                 if update.get("msg_type") != "proposal_open_contract":
                     continue
                 c = update.get("proposal_open_contract", {})
