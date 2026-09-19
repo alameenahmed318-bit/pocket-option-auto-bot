@@ -11,9 +11,9 @@ APP_ID = os.getenv("DERIV_APP_ID", "").strip()
 SYMBOL = os.getenv("DERIV_SYMBOL", "frxEURUSD").strip()
 STAKE = float(os.getenv("STAKE_USD", "1"))
 DURATION = int(os.getenv("DURATION_SECONDS", "60"))
-MAX_TRADES = int(os.getenv("MAX_TRADES", "3"))
-COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "90"))
-MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "3"))
+MAX_TRADES = int(os.getenv("MAX_TRADES", "20"))
+COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
+MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
 if not DEMO_ONLY:
@@ -253,6 +253,7 @@ def main():
             )
             return
 
+        print("CONTINUOUS MODE: bot will keep scanning/trading until the GitHub job timeout.")
         while trades < MAX_TRADES and day_pnl > -MAX_DAILY_LOSS:
             try:
                 msg = client.recv_json(timeout=30)
@@ -326,7 +327,13 @@ def main():
                 "subscribe": 1,
             })
             while True:
-                update = client.recv_json(timeout=30)
+                try:
+                    update = client.recv_json(timeout=30)
+                except ConnectionError:
+                    print("WebSocket closed while monitoring contract. Reconnecting...")
+                    client.close()
+                    client = connect_and_subscribe(account_id)
+                    continue
                 if update is None:
                     print("WebSocket quiet while waiting for contract result; continuing.")
                     continue
@@ -341,7 +348,7 @@ def main():
                     print(f"CLOSED pnl={pnl:.2f} day_pnl={day_pnl:.2f}")
                     break
 
-        print(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f}")
+        print(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
     finally:
         if client:
             client.close()
