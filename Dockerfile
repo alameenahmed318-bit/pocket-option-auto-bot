@@ -10,6 +10,8 @@ RUN apt-get update \
 
 COPY . .
 RUN mkdir -p /data
+# Ensure Railway rebuilds after remote-login bootstrap files are present.
+RUN echo "remote-login-bootstrap-2026-09-19-v2"
 COPY start_remote.sh /app/start_remote.sh
 RUN chmod +x /app/start_remote.sh
 CMD ["/app/start_remote.sh"]
