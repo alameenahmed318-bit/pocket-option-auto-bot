@@ -13,39 +13,46 @@ if not PO_EMAIL or not PO_PASSWORD:
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page()
-    page.goto("https://pocketoption.com/", wait_until="domcontentloaded", timeout=60000)
 
-    print("BROWSER: OK")
-    print(f"PAGE TITLE: {page.title()}")
-
-    email = page.locator('input[type="email"], input[name*="email" i]').first
-    password = page.locator('input[type="password"]').first
-
-    if email.count() == 0 or password.count() == 0:
-        print("LOGIN FORM: NOT FOUND")
-        print("DEMO ONLY: TRUE")
-        print("NO TRADE WAS PLACED.")
-        browser.close()
-        raise SystemExit(2)
-
-    email.fill(PO_EMAIL)
-    password.fill(PO_PASSWORD)
-
-    print("LOGIN FORM: FOUND")
-    print("CREDENTIALS: LOADED FROM ENVIRONMENT")
-    print("ATTEMPTING LOGIN: TRUE")
-
-    # Submit login only. No trading controls are clicked or invoked.
-    submit = page.locator('button[type="submit"], input[type="submit"]').first
-    if submit.count() == 0:
-        print("LOGIN BUTTON: NOT FOUND")
-        print("NO TRADE WAS PLACED.")
-        browser.close()
-        raise SystemExit(3)
-
-    submit.click()
+    # Pocket Option can keep network requests open for a long time. Do not
+    # make the test depend on the full page reaching DOMContentLoaded.
+    try:
+        page.goto("https://pocketoption.com/", wait_until="commit", timeout=30000)
+    except PlaywrightTimeoutError:
+        print("PAGE NAVIGATION: TIMEOUT AFTER COMMIT WAIT")
+        print("CONTINUING WITH PARTIALLY LOADED PAGE")
 
     try:
+        page.wait_for_timeout(5000)
+        print("BROWSER: OK")
+        print(f"PAGE URL: {page.url}")
+        print(f"PAGE TITLE: {page.title()}")
+
+        email = page.locator('input[type="email"], input[name*="email" i]').first
+        password = page.locator('input[type="password"]').first
+
+        if email.count() == 0 or password.count() == 0:
+            print("LOGIN FORM: NOT FOUND")
+            print("DEMO ONLY: TRUE")
+            print("NO TRADE WAS PLACED.")
+            raise SystemExit(2)
+
+        email.fill(PO_EMAIL)
+        password.fill(PO_PASSWORD)
+
+        print("LOGIN FORM: FOUND")
+        print("CREDENTIALS: LOADED FROM ENVIRONMENT")
+        print("ATTEMPTING LOGIN: TRUE")
+
+        # Submit login only. No trading controls are clicked or invoked.
+        submit = page.locator('button[type="submit"], input[type="submit"]').first
+        if submit.count() == 0:
+            print("LOGIN BUTTON: NOT FOUND")
+            print("NO TRADE WAS PLACED.")
+            raise SystemExit(3)
+
+        submit.click()
+
         page.wait_for_timeout(5000)
         print(f"POST-LOGIN URL: {page.url}")
         print(f"POST-LOGIN TITLE: {page.title()}")
@@ -61,10 +68,5 @@ with sync_playwright() as p:
 
         print("DEMO ONLY: TRUE")
         print("NO TRADE WAS PLACED.")
-    except PlaywrightTimeoutError:
-        print("LOGIN RESULT: TIMEOUT")
-        print("DEMO ONLY: TRUE")
-        print("NO TRADE WAS PLACED.")
-        raise
     finally:
         browser.close()
