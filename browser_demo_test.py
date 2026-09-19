@@ -21,7 +21,7 @@ with sync_playwright() as p:
     email = page.locator('input[type="email"], input[name*="email" i]').first
     password = page.locator('input[type="password"]').first
 
-    if await email.count() == 0 or await password.count() == 0:
+    if email.count() == 0 or password.count() == 0:
         print("LOGIN FORM: NOT FOUND")
         print("DEMO ONLY: TRUE")
         print("NO TRADE WAS PLACED.")
