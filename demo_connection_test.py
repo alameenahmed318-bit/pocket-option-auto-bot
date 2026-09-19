@@ -9,6 +9,27 @@ DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 SSID = os.getenv("POCKET_OPTION_SSID", "").strip()
 EMAIL = os.getenv("POCKET_OPTION_EMAIL", "").strip()
 PASSWORD = os.getenv("POCKET_OPTION_PASSWORD", "").strip()
+ALLOW_EMAIL_LOGIN = os.getenv("ALLOW_EMAIL_LOGIN", "true").lower() == "true"
+SESSION_FILE = os.getenv("POCKET_OPTION_SESSION_FILE", os.path.join(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"), "pocket_demo_ssid.txt"))
+
+def load_cached_ssid():
+    try:
+        with open(SESSION_FILE, "r", encoding="utf-8") as f:
+            value = f.read().strip()
+        return value if value.startswith("42[") else ""
+    except (FileNotFoundError, OSError):
+        return ""
+
+def save_cached_ssid(value):
+    if not value or not value.startswith("42["):
+        return
+    directory = os.path.dirname(SESSION_FILE)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp = SESSION_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(value)
+    os.replace(tmp, SESSION_FILE)
 
 ASSET = os.getenv("PO_ASSET", "EURUSD_otc")
 STAKE = float(os.getenv("STAKE", "1"))
@@ -73,16 +94,28 @@ def get_close(candle):
 
 print("DEMO ONLY: true")
 
+# Authentication order: explicit SSID, cached Railway session, then optional one-time login.
 if SSID:
     print("AUTH: using Pocket Option Demo SSID (value hidden).")
 else:
-    print("AUTH: using Demo email/password login. Session value will remain hidden.")
-    try:
-        from BinaryOptionsToolsV2.pocketoption.tools.login import login
-        SSID = login(EMAIL, PASSWORD, demo=True, backend="playwright", headless=True, timeout=60)
-        print("AUTH: email/password login succeeded; generated Demo session.")
-    except Exception as exc:
-        raise RuntimeError(f"Demo email/password login failed without bypassing site security: {exc}") from exc
+    cached = load_cached_ssid()
+    if cached:
+        SSID = cached
+        print("AUTH: using cached Demo session from persistent storage (value hidden).")
+    elif not ALLOW_EMAIL_LOGIN:
+        raise RuntimeError("No Demo session available. GitHub Actions no longer attempts browser login. Run on Railway with a persistent volume, or provide POCKET_OPTION_SSID as a secret.")
+    else:
+        if not EMAIL or not PASSWORD:
+            raise RuntimeError("No Demo session available. Configure Demo email/password for the one-time Railway bootstrap, or provide POCKET_OPTION_SSID.")
+        print("AUTH: bootstrapping Demo email/password login on the hosting service. Session value remains hidden.")
+        try:
+            from BinaryOptionsToolsV2.pocketoption.tools.login import login
+            SSID = login(EMAIL, PASSWORD, demo=True, backend="playwright", headless=True, timeout=60)
+            print("AUTH: email/password login succeeded; generated Demo session.")
+        except Exception as exc:
+            raise RuntimeError(f"Demo email/password login failed without bypassing site security: {exc}") from exc
+
+save_cached_ssid(SSID)
 
 api = PocketOption(SSID)
 
