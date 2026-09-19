@@ -36,22 +36,10 @@ def get_demo_account_id():
     if r.ok:
         body = r.json()
         data = body.get("data", [])
-        if isinstance(data, dict):
-            accounts = [data]
-        elif isinstance(data, list):
-            accounts = data
-        else:
-            accounts = []
-
-        demos = [
-            account for account in accounts
-            if str(account.get("account_type", "")).lower() == "demo"
-        ]
+        accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+        demos = [a for a in accounts if str(a.get("account_type", "")).lower() == "demo"]
         if demos:
-            active = [
-                account for account in demos
-                if str(account.get("status", "")).lower() == "active"
-            ]
+            active = [a for a in demos if str(a.get("status", "")).lower() == "active"]
             account = active[0] if active else demos[0]
             account_id = str(account.get("account_id", "")).strip()
             if account_id:
@@ -60,46 +48,36 @@ def get_demo_account_id():
                     f"balance={account.get('balance')} {account.get('currency', '')}"
                 )
                 return account_id
-
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
 
     if r.status_code == 404:
-        payload = {
-            "currency": "USD",
-            "group": "row",
-            "account_type": "demo",
-        }
         create = requests.post(
-            url, headers=auth_headers(), json=payload, timeout=20
+            url,
+            headers=auth_headers(),
+            json={"currency": "USD", "group": "row", "account_type": "demo"},
+            timeout=20,
         )
-
         if not create.ok:
             if create.status_code == 403 and "scope" in create.text.lower():
                 raise RuntimeError(
                     "Deriv token is missing the account_manage scope. "
-                    "Create a new Deriv PAT with BOTH trade and account_manage "
-                    "scopes, then replace the GitHub Secret DERIV_TOKEN."
+                    "Create a new Deriv PAT with BOTH trade and account_manage scopes, "
+                    "then replace the GitHub Secret DERIV_TOKEN."
                 )
             raise RuntimeError(
                 f"Deriv Demo Options account creation failed with "
                 f"HTTP {create.status_code}: {create.text}"
             )
-
         body = create.json()
         data = body.get("data", [])
         accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
-        demos = [
-            account for account in accounts
-            if str(account.get("account_type", "")).lower() == "demo"
-        ]
+        demos = [a for a in accounts if str(a.get("account_type", "")).lower() == "demo"]
         if not demos:
             raise RuntimeError(f"No Demo Options account was returned: {body}")
-
         account = demos[0]
         account_id = str(account.get("account_id", "")).strip()
         if not account_id:
             raise RuntimeError(f"Demo account response has no account_id: {account}")
-
         print(
             f"Using Demo Options account: {account_id} | "
             f"balance={account.get('balance')} {account.get('currency', '')}"
@@ -135,9 +113,7 @@ def get_ws_url(account_id):
 class Client:
     def __init__(self, url):
         self.ws = websocket.create_connection(
-            url,
-            timeout=30,
-            enable_multithread=True,
+            url, timeout=30, enable_multithread=True
         )
         self.req_id = 0
 
@@ -153,6 +129,8 @@ class Client:
             return json.loads(self.ws.recv())
         except websocket.WebSocketTimeoutException:
             return None
+        except websocket.WebSocketConnectionClosedException:
+            raise ConnectionError("WebSocket connection to Deriv was closed.")
 
     def recv_for(self, req_id, msg_type=None, timeout=30):
         deadline = time.time() + timeout
@@ -174,6 +152,14 @@ class Client:
             self.ws.close()
         except Exception:
             pass
+
+def connect_and_subscribe(account_id):
+    client = Client(get_ws_url(account_id))
+    rid = client.send({"balance": 1})
+    balance_msg = client.recv_for(rid, "balance")
+    print("Connected:", balance_msg["balance"])
+    client.send({"ticks": SYMBOL, "subscribe": 1})
+    return client
 
 def ema(values, n):
     if len(values) < n:
@@ -211,35 +197,72 @@ def main():
         f"DERIV DEMO BOT | {SYMBOL} | stake={STAKE} | "
         f"duration={DURATION}s | DRY_RUN={DRY_RUN}"
     )
+
     account_id = get_demo_account_id()
-    client = Client(get_ws_url(account_id))
+    client = None
     prices = deque(maxlen=120)
     trades = 0
     day_pnl = 0.0
     last_trade = 0.0
 
     try:
-        rid = client.send({"balance": 1})
-        balance_msg = client.recv_for(rid, "balance")
-        print("Connected:", balance_msg["balance"])
+        # The requested symbol may be unavailable when its market is closed.
+        # Reconnect a few times if Deriv closes the socket.
+        connected_once = False
+        for attempt in range(1, 4):
+            try:
+                client = connect_and_subscribe(account_id)
+                connected_once = True
+                break
+            except (ConnectionError, websocket.WebSocketException) as exc:
+                print(f"Connection attempt {attempt}/3 failed: {exc}")
+                if client:
+                    client.close()
+                if attempt < 3:
+                    time.sleep(5)
 
-        client.send({"ticks": SYMBOL, "subscribe": 1})
+        if not connected_once:
+            raise RuntimeError("Could not establish a stable Deriv WebSocket connection.")
+
+        # Collect enough ticks for EMA/RSI. If the market is closed/unavailable,
+        # finish cleanly instead of failing the GitHub Actions job.
         deadline = time.time() + 120
         while time.time() < deadline and len(prices) < 40:
-            msg = client.recv_json(timeout=30)
+            try:
+                msg = client.recv_json(timeout=30)
+            except ConnectionError as exc:
+                print(f"WebSocket closed while waiting for {SYMBOL}: {exc}")
+                print("No tick stream is available right now; ending this Demo run cleanly.")
+                return
+
             if msg is None:
-                print("WebSocket quiet for 30s while collecting ticks; still connected.")
+                print(
+                    f"No {SYMBOL} tick received for 30s. "
+                    "The market may be closed or the symbol may be unavailable."
+                )
                 continue
+
             if msg.get("msg_type") == "tick":
                 quote = msg.get("tick", {}).get("quote")
                 if quote is not None:
                     prices.append(float(quote))
 
         if len(prices) < 40:
-            raise RuntimeError("Not enough tick data to start.")
+            print(
+                f"BOT STOPPED cleanly: only {len(prices)}/40 ticks received for "
+                f"{SYMBOL}. No trade was made."
+            )
+            return
 
         while trades < MAX_TRADES and day_pnl > -MAX_DAILY_LOSS:
-            msg = client.recv_json(timeout=30)
+            try:
+                msg = client.recv_json(timeout=30)
+            except ConnectionError:
+                print("WebSocket closed. Reconnecting to continue Demo test...")
+                client.close()
+                client = connect_and_subscribe(account_id)
+                continue
+
             if msg is None:
                 print("WebSocket quiet for 30s; waiting for the next tick.")
                 continue
@@ -321,7 +344,8 @@ def main():
 
         print(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f}")
     finally:
-        client.close()
+        if client:
+            client.close()
 
 if __name__ == "__main__":
     main()
