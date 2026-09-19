@@ -4,9 +4,9 @@ on:
   # Manual start is still available, but normal operation is automatic.
   workflow_dispatch:
   schedule:
-    # Start a new session every 6 hours, including weekends.
+    # Start a new session every 5 minutes, including weekends.
     # The bot itself checks which markets are actually open and tradable.
-    - cron: "0 */6 * * *"
+    - cron: "*/5 * * * *"
 
 concurrency:
   group: deriv-demo-bot
