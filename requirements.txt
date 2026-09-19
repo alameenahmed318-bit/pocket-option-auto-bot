@@ -1,4 +1,2 @@
 python-dotenv>=1.0,<2
-pandas>=2.0,<3
-numpy>=1.26,<3
-playwright>=1.55,<1.56
+pocket-trader>=0.1,<1
