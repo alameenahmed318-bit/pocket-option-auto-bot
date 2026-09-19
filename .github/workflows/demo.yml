@@ -17,7 +17,12 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run demo bot
         env:
+          # GitHub Actions is separate from Railway.
+          # Use the same Pocket Option Demo email/password as GitHub Secrets.
+          # SSID is optional; the script can request a fresh Demo SSID.
           POCKET_OPTION_SSID: ${{ secrets.POCKET_OPTION_SSID }}
+          POCKET_OPTION_EMAIL: ${{ secrets.POCKET_OPTION_EMAIL }}
+          POCKET_OPTION_PASSWORD: ${{ secrets.POCKET_OPTION_PASSWORD }}
           DEMO_ONLY: "true"
           STAKE: "1"
           TRADE_DURATION: "60"
