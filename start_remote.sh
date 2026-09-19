@@ -4,10 +4,10 @@ set -eu
 : "${REMOTE_LOGIN_PASSWORD:?Set REMOTE_LOGIN_PASSWORD in Railway Variables}"
 
 export DISPLAY=:99
-Xvfb :99 -screen 0 1400x900x24 -ac &
+Xvfb :99 -screen 0 390x844x24 -ac &
 sleep 2
 
-x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -localhost &
+x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -localhost -noxdamage -wait 10 -defer 10 -ncache 0 -noxfixes -noxrecord &
 
 # Fresh per-container VNC token.
 TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
