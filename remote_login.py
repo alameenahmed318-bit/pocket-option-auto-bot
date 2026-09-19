@@ -19,11 +19,26 @@ def launch():
     status("Opening Pocket Option login browser...", False)
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--window-size=390,844","--disable-dev-shm-usage","--disable-gpu"])
-        context = browser.new_context(viewport={"width": 390, "height": 844}, screen={"width": 390, "height": 844}, is_mobile=True)
+        browser = p.chromium.launch(
+            headless=False,
+            args=[
+                "--window-size=392,844",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-gpu-compositing",
+                "--disable-software-rasterizer",
+                "--no-sandbox",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ],
+        )
+        context = browser.new_context(
+            viewport={"width": 392, "height": 844},
+            screen={"width": 392, "height": 844},
+            is_mobile=True,
+        )
         page = context.new_page()
         page.goto("https://pocketoption.com/en/login/", wait_until="domcontentloaded", timeout=120000)
-        # Keep the login/CAPTCHA visually smaller on the iPhone-sized remote screen.
         try:
             page.evaluate("document.documentElement.style.zoom = '0.82'; document.body.style.zoom = '0.82';")
         except Exception:
@@ -56,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
 <body style="font-family:sans-serif"><h2>Pocket Option Demo Login</h2>
 <p>Use the remote browser below. Enter your credentials yourself and complete any CAPTCHA.</p>
 <iframe src="/vnc/vnc.html?autoconnect=1&resize=scale" style="width:100%;height:80vh;border:1px solid #aaa"></iframe></body></html>"""
-            self.send_response(200); self.send_header("Content-Type","text/html"); self.end_headers(); self.wfile.write(body); return
+            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(body); return
         self.send_response(404); self.end_headers()
     def log_message(self, *_): pass
 
