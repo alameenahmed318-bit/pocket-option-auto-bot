@@ -7,11 +7,14 @@ set -eu
 export DISPLAY=:99
 Xvfb :99 -screen 0 392x844x24 -ac +extension GLX +extension RANDR &
 sleep 3
-x11vnc -display :99 -forever -shared -rfbport 5901 -nopw -localhost -noshm -noxdamage -noxfixes -noxrecord -wait 10 -defer 10 -ncache 0 &
+
+# Keep VNC on an internal port; Railway's PORT is reserved for websockify.
+VNC_PORT=5902
+x11vnc -display :99 -forever -shared -rfbport "$VNC_PORT" -nopw -localhost -noshm -noxdamage -noxfixes -noxrecord -wait 10 -defer 10 -ncache 0 &
 sleep 2
 
 TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
-printf '%s: localhost:5901\n' "$TOKEN" > /tmp/websockify.tokens
+printf '%s: localhost:%s\n' "$TOKEN" "$VNC_PORT" > /tmp/websockify.tokens
 
 cat > /usr/share/novnc/index.html <<EOF
 <!doctype html><html><head>
