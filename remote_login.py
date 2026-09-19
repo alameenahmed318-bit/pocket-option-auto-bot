@@ -19,10 +19,15 @@ def launch():
     status("Opening Pocket Option login browser...", False)
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--window-size=390,844","--disable-dev-shm-usage"])
+        browser = p.chromium.launch(headless=False, args=["--window-size=390,844","--disable-dev-shm-usage","--disable-gpu"])
         context = browser.new_context(viewport={"width": 390, "height": 844}, screen={"width": 390, "height": 844}, is_mobile=True)
         page = context.new_page()
         page.goto("https://pocketoption.com/en/login/", wait_until="domcontentloaded", timeout=120000)
+        # Keep the login/CAPTCHA visually smaller on the iPhone-sized remote screen.
+        try:
+            page.evaluate("document.documentElement.style.zoom = '0.82'; document.body.style.zoom = '0.82';")
+        except Exception:
+            pass
         status("Log in manually in the remote browser. Complete CAPTCHA yourself if it appears.", True)
         while True:
             cookies = context.cookies()
