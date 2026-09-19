@@ -27,7 +27,7 @@ jobs:
           DERIV_SYMBOL: "frxEURUSD"
           STAKE_USD: "3"
           DURATION_SECONDS: "60"
-          MAX_TRADES: "20"
+          MAX_TRADES: "10"
           COOLDOWN_SECONDS: "30"
           MAX_DAILY_LOSS_USD: "15"
           EARLY_PROFIT_SECONDS: "5"
