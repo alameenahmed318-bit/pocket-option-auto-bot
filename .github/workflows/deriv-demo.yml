@@ -1,11 +1,16 @@
 name: Deriv Demo Bot
 
 on:
+  # Manual start is still available, but normal operation is automatic.
   workflow_dispatch:
   schedule:
-    # Keep the bot running in long sessions during the weekday FX market.
-    # Each session is allowed to run for just under 6 hours.
+    # Start a new session automatically every 6 hours on weekdays.
+    # Each session runs for up to 350 minutes, so sessions do not overlap.
     - cron: "0 */6 * * 1-5"
+
+concurrency:
+  group: deriv-demo-bot
+  cancel-in-progress: false
 
 jobs:
   demo:
