@@ -19,6 +19,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
       - name: Check Demo authentication
         env:
           POCKET_OPTION_SSID: ${{ secrets.POCKET_OPTION_SSID }}
