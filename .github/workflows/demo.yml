@@ -17,12 +17,11 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run demo bot
         env:
-          POCKET_OPTION_EMAIL: ${{ secrets.POCKET_OPTION_EMAIL }}
-          POCKET_OPTION_PASSWORD: ${{ secrets.POCKET_OPTION_PASSWORD }}
           POCKET_OPTION_SSID: ${{ secrets.POCKET_OPTION_SSID }}
           DEMO_ONLY: "true"
           STAKE: "1"
+          TRADE_DURATION: "60"
           MAX_TRADES_PER_RUN: "3"
           MAX_DAILY_LOSS: "3"
           COOLDOWN_SECONDS: "60"
-        run: python bot.py
+        run: python demo_connection_test.py
