@@ -11,7 +11,7 @@ x11vnc -display :99 -forever -shared -rfbport 5901 -nopw -localhost -noxdamage -
 
 # Fresh per-container VNC token.
 TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
-printf '%s: localhost:5900\n' "$TOKEN" > /tmp/websockify.tokens
+printf '%s: localhost:5901\n' "$TOKEN" > /tmp/websockify.tokens
 
 # Direct mobile launcher: open Pocket Option's remote browser screen immediately.
 # noVNC remains the transport/UI layer, but the user never sees its landing page.
