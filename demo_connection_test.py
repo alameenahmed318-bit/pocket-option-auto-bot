@@ -94,9 +94,13 @@ if not SSID:
 
 if not SSID:
     print("AUTH: no Demo SSID/session found.")
-    print("AUTH: browser email/password login is disabled.")
-    print("AUTH: add a valid Demo POCKET_OPTION_SSID, then redeploy.")
-    raise SystemExit(0)
+    print("AUTH: waiting for the protected Railway Demo login page...")
+    while not SSID:
+        time.sleep(5)
+        SSID = load_cached_ssid()
+        if SSID:
+            print("AUTH: Demo session received from the remote login bootstrap (value hidden).")
+            break
 
 print("AUTH: using Demo session (value hidden).")
 save_cached_ssid(SSID)
