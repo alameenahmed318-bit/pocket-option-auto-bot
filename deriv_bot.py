@@ -232,7 +232,7 @@ def main():
                 msg = client.recv_json(timeout=30)
             except ConnectionError as exc:
                 print(f"WebSocket closed while waiting for {SYMBOL}: {exc}")
-                print("No tick stream is available right now; ending this Demo run cleanly.")
+                print(f"NO TRADE: {SYMBOL} has no live tick stream right now (market closed/unavailable).")
                 return
 
             if msg is None:
@@ -249,8 +249,8 @@ def main():
 
         if len(prices) < 40:
             print(
-                f"BOT STOPPED cleanly: only {len(prices)}/40 ticks received for "
-                f"{SYMBOL}. No trade was made."
+                f"BOT STOPPED: only {len(prices)}/40 live ticks received for "
+                f"{SYMBOL}. No Demo contract was purchased."
             )
             return
 
