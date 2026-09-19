@@ -5,9 +5,10 @@ COPY requirements.txt .
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && playwright install --with-deps chromium firefox
 
 COPY . .
 
-# API-only demo connection test; no browser automation.
+# API-only demo connection test; browser is used only for automatic login.
 CMD ["python", "-u", "demo_connection_test.py"]
