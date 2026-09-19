@@ -8,7 +8,6 @@ API_BASE = "https://api.derivws.com"
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 TOKEN = os.getenv("DERIV_TOKEN", "").strip()
 APP_ID = os.getenv("DERIV_APP_ID", "").strip()
-ACCOUNT_ID = os.getenv("DERIV_ACCOUNT_ID", "").strip()
 SYMBOL = os.getenv("DERIV_SYMBOL", "frxEURUSD").strip()
 STAKE = float(os.getenv("STAKE_USD", "1"))
 DURATION = int(os.getenv("DURATION_SECONDS", "60"))
@@ -19,13 +18,40 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
 if not DEMO_ONLY:
     raise SystemExit("Safety stop: DEMO_ONLY must remain true.")
-if not TOKEN or not APP_ID or not ACCOUNT_ID:
-    raise SystemExit("Missing DERIV_TOKEN, DERIV_APP_ID, or DERIV_ACCOUNT_ID.")
+if not TOKEN or not APP_ID:
+    raise SystemExit("Missing DERIV_TOKEN or DERIV_APP_ID.")
 
-def get_ws_url():
+def auth_headers():
+    return {
+        "Authorization": f"Bearer {TOKEN}",
+        "Deriv-App-ID": APP_ID,
+    }
+
+def get_demo_account_id():
+    r = requests.get(
+        f"{API_BASE}/trading/v1/options/accounts",
+        headers=auth_headers(),
+        timeout=20,
+    )
+    r.raise_for_status()
+    data = r.json().get("data", [])
+    if isinstance(data, dict):
+        data = [data]
+    demos = [a for a in data if str(a.get("account_type", "")).lower() == "demo"]
+    if not demos:
+        raise RuntimeError("No Deriv Options demo account found.")
+    active = [a for a in demos if str(a.get("status", "")).lower() == "active"]
+    account = active[0] if active else demos[0]
+    account_id = str(account.get("account_id", "")).strip()
+    if not account_id:
+        raise RuntimeError(f"Demo account response has no account_id: {account}")
+    print(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency','')}")
+    return account_id
+
+def get_ws_url(account_id):
     r = requests.post(
-        f"{API_BASE}/trading/v1/options/accounts/{ACCOUNT_ID}/otp",
-        headers={"Authorization": f"Bearer {TOKEN}", "Deriv-App-ID": APP_ID},
+        f"{API_BASE}/trading/v1/options/accounts/{account_id}/otp",
+        headers=auth_headers(),
         timeout=20,
     )
     r.raise_for_status()
@@ -95,7 +121,8 @@ def signal(prices):
 
 def main():
     print(f"DERIV DEMO BOT | {SYMBOL} | stake={STAKE} | duration={DURATION}s | DRY_RUN={DRY_RUN}")
-    client = Client(get_ws_url())
+    account_id = get_demo_account_id()
+    client = Client(get_ws_url(account_id))
     prices = deque(maxlen=120)
     trades = 0
     day_pnl = 0.0
