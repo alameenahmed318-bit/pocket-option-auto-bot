@@ -46,9 +46,19 @@ server {
         proxy_set_header Host \$host;
     }
 
-    location / {
+    location /websockify {
         proxy_pass http://127.0.0.1:6080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location / {
+        root /usr/share/novnc;
+        try_files \$uri \$uri/ /vnc.html;
     }
 }
 EOF
