@@ -3,13 +3,14 @@ name: Deriv Demo Bot
 on:
   workflow_dispatch:
   schedule:
-    # EUR/USD is a weekday market; run every 15 minutes Monday-Friday.
-    - cron: "*/15 * * * 1-5"
+    # Keep the bot running in long sessions during the weekday FX market.
+    # Each session is allowed to run for just under 6 hours.
+    - cron: "0 */6 * * 1-5"
 
 jobs:
   demo:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,9 +25,9 @@ jobs:
           DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
           DERIV_SYMBOL: "frxEURUSD"
-          STAKE_USD: "1"
+          STAKE_USD: "3"
           DURATION_SECONDS: "60"
-          MAX_TRADES: "3"
-          COOLDOWN_SECONDS: "90"
-          MAX_DAILY_LOSS_USD: "3"
-        run: python deriv_bot.py
+          MAX_TRADES: "20"
+          COOLDOWN_SECONDS: "30"
+          MAX_DAILY_LOSS_USD: "15"
+        run: python -u deriv_bot.py
