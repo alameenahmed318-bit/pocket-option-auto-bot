@@ -1,5 +1,5 @@
 import os
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 PO_EMAIL = os.getenv("POCKET_OPTION_EMAIL", "")
@@ -33,10 +33,38 @@ with sync_playwright() as p:
 
     print("LOGIN FORM: FOUND")
     print("CREDENTIALS: LOADED FROM ENVIRONMENT")
-    print("DEMO ONLY: TRUE")
-    print("NO TRADE WAS PLACED.")
+    print("ATTEMPTING LOGIN: TRUE")
 
-    # Do not submit the form. This test only verifies that Railway can
-    # load the page and inject configured credentials without trading.
+    # Submit login only. No trading controls are clicked or invoked.
+    submit = page.locator('button[type="submit"], input[type="submit"]').first
+    if submit.count() == 0:
+        print("LOGIN BUTTON: NOT FOUND")
+        print("NO TRADE WAS PLACED.")
+        browser.close()
+        raise SystemExit(3)
 
-    browser.close()
+    submit.click()
+
+    try:
+        page.wait_for_timeout(5000)
+        print(f"POST-LOGIN URL: {page.url}")
+        print(f"POST-LOGIN TITLE: {page.title()}")
+
+        # We only report whether the page moved away from the public login
+        # screen. CAPTCHA/2FA or a failed login is not bypassed.
+        current_url = page.url.lower()
+        login_markers = ("login", "sign-in", "signin")
+        if not any(marker in current_url for marker in login_markers):
+            print("LOGIN RESULT: PAGE LEFT LOGIN SCREEN")
+        else:
+            print("LOGIN RESULT: STILL ON LOGIN SCREEN")
+
+        print("DEMO ONLY: TRUE")
+        print("NO TRADE WAS PLACED.")
+    except PlaywrightTimeoutError:
+        print("LOGIN RESULT: TIMEOUT")
+        print("DEMO ONLY: TRUE")
+        print("NO TRADE WAS PLACED.")
+        raise
+    finally:
+        browser.close()
