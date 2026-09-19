@@ -8,7 +8,6 @@ export DISPLAY=:99
 Xvfb :99 -screen 0 392x844x24 -ac +extension GLX +extension RANDR &
 sleep 3
 
-# Keep VNC on an internal port; Railway's PORT is reserved for websockify.
 VNC_PORT=5902
 x11vnc -display :99 -forever -shared -rfbport "$VNC_PORT" -nopw -localhost -noshm -noxdamage -noxfixes -noxrecord -wait 10 -defer 10 -ncache 0 &
 sleep 2
@@ -24,6 +23,39 @@ cat > /usr/share/novnc/index.html <<EOF
 </head><body></body></html>
 EOF
 
-websockify --web=/usr/share/novnc/ --file-only   --token-plugin websockify.token_plugins.TokenFile   --token-source /tmp/websockify.tokens   "0.0.0.0:${PORT}" &
+# websockify serves noVNC and proxies WebSocket traffic internally.
+websockify --web=/usr/share/novnc/ --file-only   --token-plugin websockify.token_plugins.TokenFile   --token-source /tmp/websockify.tokens   127.0.0.1:8080 &
 
-exec python -u remote_login.py
+# Protect the public Railway endpoint with the existing Railway password.
+HASH="$(openssl passwd -apr1 "$REMOTE_LOGIN_PASSWORD")"
+printf 'admin:%s\n' "$HASH" > /etc/nginx/.htpasswd
+
+cat > /etc/nginx/conf.d/pocket-vnc.conf <<EOF
+server {
+    listen ${PORT};
+    server_name _;
+
+    auth_basic "Pocket Option Demo Bot";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location /websockify {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+    }
+}
+EOF
+
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+nginx
+
+# The bot's own status HTTP server stays internal so it does not compete for Railway's PORT.
+exec env BOT_HTTP_PORT=8081 python -u remote_login.py
