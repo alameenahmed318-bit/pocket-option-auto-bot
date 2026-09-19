@@ -7,8 +7,6 @@ load_dotenv()
 
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 SSID = os.getenv("POCKET_OPTION_SSID", "").strip()
-EMAIL = os.getenv("POCKET_OPTION_EMAIL", "").strip()
-PASSWORD = os.getenv("POCKET_OPTION_PASSWORD", "").strip()
 
 ASSET = os.getenv("PO_ASSET", "EURUSD_otc")
 STAKE = float(os.getenv("STAKE", "1"))
@@ -21,13 +19,14 @@ COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "90"))
 if not DEMO_ONLY:
     raise RuntimeError("Safety stop: DEMO_ONLY must be true.")
 
-if not SSID and (not EMAIL or not PASSWORD):
+if not SSID:
     raise RuntimeError(
-        "Missing Pocket Option authentication. Set POCKET_OPTION_SSID, "
-        "or set POCKET_OPTION_EMAIL and POCKET_OPTION_PASSWORD in Railway Variables."
+        "Missing POCKET_OPTION_SSID. Browser email/password login is disabled "
+        "because GitHub Actions cannot reliably reach Pocket Option's login page. "
+        "Provide a valid Pocket Option Demo SSID as a secret."
     )
 
-if SSID and not SSID.startswith("42["):
+if not SSID.startswith("42["):
     raise RuntimeError(
         "POCKET_OPTION_SSID must be the full Pocket Option session string starting with 42[."
     )
@@ -36,7 +35,6 @@ if STAKE <= 0 or DURATION < 5 or MAX_TRADES < 1 or MAX_DAILY_LOSS <= 0:
     raise RuntimeError("Invalid trading configuration.")
 
 from BinaryOptionsToolsV2.pocketoption import PocketOption
-from BinaryOptionsToolsV2.pocketoption.tools.login import login
 
 
 def ema(values, period):
@@ -74,20 +72,7 @@ def get_close(candle):
 
 
 print("DEMO ONLY: true")
-
-if not SSID:
-    print("AUTH: SSID not supplied; requesting a fresh Demo SSID using Pocket Option email/password.")
-    SSID = login(
-        EMAIL,
-        PASSWORD,
-        demo=True,
-        backend="playwright",
-        headless=True,
-        timeout=90,
-    )
-    print("AUTH: fresh Demo SSID obtained (value hidden).")
-else:
-    print("AUTH: using Pocket Option SSID from Railway Variables (value hidden).")
+print("AUTH: using Pocket Option Demo SSID (value hidden).")
 
 api = PocketOption(SSID)
 
