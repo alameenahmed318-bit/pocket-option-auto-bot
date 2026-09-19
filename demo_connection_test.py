@@ -8,7 +8,7 @@ load_dotenv()
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 EMAIL = os.getenv("POCKET_OPTION_EMAIL", "")
 PASSWORD = os.getenv("POCKET_OPTION_PASSWORD", "")
-BACKEND = os.getenv("PO_LOGIN_BACKEND", "auto").lower()
+BACKEND = os.getenv("PO_LOGIN_BACKEND", "playwright").lower()
 CAPSOLVER_KEY = os.getenv("CAPSOLVER_API_KEY", "")
 
 if not DEMO_ONLY:
@@ -40,15 +40,17 @@ print(f"LOGIN: starting automatic Demo login using backend={BACKEND}")
 
 try:
     ssid = login(EMAIL, PASSWORD, **kwargs)
-except LoginError as exc:
+except (LoginError, ImportError, RuntimeError) as exc:
     raise RuntimeError(f"Automatic Demo login failed: {exc}") from exc
+
+if not ssid:
+    raise RuntimeError("Automatic Demo login returned an empty session.")
 
 print("LOGIN: OK")
 print("SESSION: obtained automatically; not printed for security.")
 
 api = PocketOption(ssid, is_demo=True)
 api.connect()
-
 time.sleep(3)
 
 try:
