@@ -13,15 +13,28 @@ x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -localhost -noxdamage -
 TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(24))')"
 printf '%s: localhost:5900\n' "$TOKEN" > /tmp/websockify.tokens
 
-# Open the full noVNC UI by default. It has the mobile on-screen keyboard.
+# Direct mobile launcher: open Pocket Option's remote browser screen immediately.
+# noVNC remains the transport/UI layer, but the user never sees its landing page.
 cat > /usr/share/novnc/index.html <<EOF
 <!doctype html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="0; url=/vnc.html?autoconnect=1&resize=scale&path=websockify%3Ftoken%3D${TOKEN}&scaleViewport=true&resize=scale&viewOnly=false">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<style>
+html,body{margin:0;width:100%;height:100%;background:#111;overflow:hidden}
+#go{position:fixed;inset:0;width:100%;height:100%;border:0}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:600 16px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:#111;z-index:2}
+</style>
 </head>
-<body>Opening secure noVNC...</body>
+<body>
+<div id="loading">Opening Pocket Option…</div>
+<iframe id="go" allow="clipboard-read; clipboard-write" src="/vnc.html?autoconnect=1&reconnect=1&reconnect_delay=1000&resize=scale&scaleViewport=true&view_only=false&path=websockify%3Ftoken%3D${TOKEN}"></iframe>
+<script>
+const f=document.getElementById('go');
+f.addEventListener('load',()=>setTimeout(()=>document.getElementById('loading').style.display='none',1200));
+</script>
+</body>
 </html>
 EOF
 
