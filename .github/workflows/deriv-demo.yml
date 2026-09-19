@@ -4,9 +4,9 @@ on:
   # Manual start is still available, but normal operation is automatic.
   workflow_dispatch:
   schedule:
-    # Start a new session automatically every 6 hours on weekdays.
-    # Each session runs for up to 350 minutes, so sessions do not overlap.
-    - cron: "0 */6 * * 1-5"
+    # Start a new session every 6 hours, including weekends.
+    # The bot itself checks which markets are actually open and tradable.
+    - cron: "0 */6 * * *"
 
 concurrency:
   group: deriv-demo-bot
@@ -29,7 +29,8 @@ jobs:
           DRY_RUN: "false"
           DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
-          DERIV_SYMBOL: "frxEURUSD"
+          # AUTO = discover all currently open symbols supporting CALL/PUT.
+          DERIV_SYMBOL: "AUTO"
           STAKE_USD: "3"
           DURATION_SECONDS: "60"
           MAX_TRADES: "10"
