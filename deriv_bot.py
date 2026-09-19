@@ -15,6 +15,7 @@ MAX_TRADES = int(os.getenv("MAX_TRADES", "20"))
 COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+EARLY_PROFIT_SECONDS = int(os.getenv("EARLY_PROFIT_SECONDS", "5"))
 
 if not DEMO_ONLY:
     raise SystemExit("Safety stop: DEMO_ONLY must remain true.")
@@ -315,6 +316,8 @@ def main():
             })
             bought = client.recv_for(rid, "buy")["buy"]
             contract_id = bought["contract_id"]
+            buy_time = time.time()
+            buy_price = float(bought.get("buy_price", proposal.get("ask_price", STAKE)) or STAKE)
             trades += 1
             print(
                 f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: "
@@ -346,6 +349,30 @@ def main():
                     pnl = float(c.get("profit", 0) or 0)
                     day_pnl += pnl
                     print(f"CLOSED pnl={pnl:.2f} day_pnl={day_pnl:.2f}")
+                    break
+
+                elapsed = time.time() - buy_time
+                profit = float(c.get("profit", 0) or 0)
+                if elapsed >= EARLY_PROFIT_SECONDS and profit > 0:
+                    print(
+                        f"EARLY TAKE PROFIT: +{profit:.2f} after {elapsed:.1f}s. "
+                        "Selling Demo contract now."
+                    )
+                    sell_rid = client.send({
+                        "sell": contract_id,
+                        "price": 0,
+                    })
+                    try:
+                        sold = client.recv_for(sell_rid, "sell", timeout=10)["sell"]
+                        sold_for = float(sold.get("sold_for", buy_price) or buy_price)
+                        pnl = sold_for - buy_price
+                        day_pnl += pnl
+                        print(
+                            f"EARLY CLOSED pnl={pnl:.2f} sold_for={sold_for:.2f} "
+                            f"day_pnl={day_pnl:.2f}"
+                        )
+                    except Exception as exc:
+                        print(f"EARLY SELL FAILED: {exc}. Waiting for normal expiry.")
                     break
 
         print(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
