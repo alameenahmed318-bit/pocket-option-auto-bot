@@ -30,4 +30,5 @@ jobs:
           MAX_TRADES: "20"
           COOLDOWN_SECONDS: "30"
           MAX_DAILY_LOSS_USD: "15"
+          EARLY_PROFIT_SECONDS: "5"
         run: python -u deriv_bot.py
