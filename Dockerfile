@@ -1,18 +1,15 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-
 COPY requirements.txt .
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates build-essential pkg-config \
+    && apt-get install -y --no-install-recommends git ca-certificates build-essential pkg-config xvfb x11vnc novnc websockify \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt \
-    && playwright install --with-deps firefox chromium \
-    && playwright install chrome --force
+    && playwright install --with-deps chromium
 
 COPY . .
-
-# Force Railway to rebuild the browser layer after the Playwright browser fix.
-RUN echo "pocket-option-playwright-browser-fix-2026-09-19"
-
-CMD ["python", "-u", "demo_connection_test.py"]
+RUN mkdir -p /data
+COPY start_remote.sh /app/start_remote.sh
+RUN chmod +x /app/start_remote.sh
+CMD ["/app/start_remote.sh"]
