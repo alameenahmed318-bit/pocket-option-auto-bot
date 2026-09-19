@@ -3,7 +3,8 @@ name: Deriv Demo Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"
+    # EUR/USD is a weekday market; run every 15 minutes Monday-Friday.
+    - cron: "*/15 * * * 1-5"
 
 jobs:
   demo:
@@ -18,7 +19,8 @@ jobs:
       - name: Run Deriv demo bot
         env:
           DEMO_ONLY: "true"
-          DRY_RUN: "true"
+          # DEMO_ONLY stays true, so these are virtual-money Demo contracts.
+          DRY_RUN: "false"
           DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
           DERIV_SYMBOL: "frxEURUSD"
