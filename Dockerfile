@@ -8,7 +8,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git build-essential pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt \
-    && python -m playwright install --with-deps chrome chromium
+    && python -m playwright install --with-deps chromium \
+    && mkdir -p /opt/google/chrome \
+    && CHROME_BIN="$(find /ms-playwright -type f \( -path "*/chrome-linux/chrome" -o -path "*/chrome-linux64/chrome" \) | head -n 1)" \
+    && test -n "$CHROME_BIN" \
+    && ln -sf "$CHROME_BIN" /opt/google/chrome/chrome
 
 COPY . .
 
