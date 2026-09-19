@@ -7,7 +7,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt \
-    && playwright install --with-deps chromium
+    && playwright install --with-deps firefox chromium \
+    && playwright install chrome
 
 COPY . .
 
