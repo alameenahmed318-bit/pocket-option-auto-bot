@@ -21,7 +21,6 @@ jobs:
           DRY_RUN: "true"
           DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
-          DERIV_ACCOUNT_ID: ${{ secrets.DERIV_ACCOUNT_ID }}
           DERIV_SYMBOL: "frxEURUSD"
           STAKE_USD: "1"
           DURATION_SECONDS: "60"
