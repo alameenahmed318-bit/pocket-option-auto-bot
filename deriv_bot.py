@@ -12,11 +12,12 @@ APP_ID = os.getenv("DERIV_APP_ID", "").strip()
 SYMBOL = os.getenv("DERIV_SYMBOL", "AUTO").strip()
 STAKE = float(os.getenv("STAKE_USD", "1"))
 DURATION = int(os.getenv("DURATION_SECONDS", "60"))
-MAX_TRADES = int(os.getenv("MAX_TRADES", "20"))
+MAX_TRADES = int(os.getenv("MAX_TRADES", "100"))
 COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-EARLY_PROFIT_SECONDS = int(os.getenv("EARLY_PROFIT_SECONDS", "5"))
+EARLY_PROFIT_SECONDS = int(os.getenv("EARLY_PROFIT_SECONDS", "1"))
+TAKE_PROFIT_USD = float(os.getenv("TAKE_PROFIT_USD", "0.20"))
 LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
 
 
@@ -421,8 +422,8 @@ def main():
 
                 elapsed = time.time() - buy_time
                 profit = float(c.get("profit", 0) or 0)
-                if elapsed >= EARLY_PROFIT_SECONDS and profit > 0:
-                    print(f"EARLY TAKE PROFIT: +{profit:.2f} after {elapsed:.1f}s. Selling Demo contract now.")
+                if elapsed >= EARLY_PROFIT_SECONDS and profit >= TAKE_PROFIT_USD:
+                    print(f"TAKE PROFIT: +{profit:.2f} after {elapsed:.1f}s (target +${TAKE_PROFIT_USD:.2f}). Selling Demo contract now.")
                     sell_rid = client.send({"sell": contract_id, "price": 0})
                     try:
                         sold = client.recv_for(sell_rid, "sell", timeout=10)["sell"]
