@@ -27,14 +27,14 @@ jobs:
           DRY_RUN: "false"
           DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
-          DERIV_SYMBOL: "AUTO"
+          DERIV_SYMBOL: "R_75"
           STAKE_USD: "1"
           ACCU_GROWTH_RATE: "0.03"
           CLOSE_AFTER_SECONDS: "2"
           PROFIT_TARGET_USD: "0.02"
           MAX_TRADES: "0"
           COOLDOWN_SECONDS: "2"
-          STABLE_MARKETS_LIMIT: "5"
+          STABLE_MARKETS_LIMIT: "1"
           MAX_DAILY_LOSS_USD: "50"
         run: |
           set +e
