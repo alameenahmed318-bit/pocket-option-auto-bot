@@ -29,8 +29,8 @@ jobs:
           STAKE_USD: "1"
           ACCU_GROWTH_RATE: "0.03"
           CLOSE_AFTER_SECONDS: "3"
-          MAX_TRADES: "100"
-          COOLDOWN_SECONDS: "30"
+          MAX_TRADES: "0"
+          COOLDOWN_SECONDS: "10"
           MAX_DAILY_LOSS_USD: "50"
         run: python -u deriv_bot.py
       - name: Upload Deriv trade log
