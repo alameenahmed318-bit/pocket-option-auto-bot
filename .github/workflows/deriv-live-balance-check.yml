@@ -7,34 +7,48 @@ jobs:
   balance:
     runs-on: ubuntu-latest
     steps:
-      - name: Check live Options account balance only
+      - name: Diagnose live account access (balance only)
         env:
           LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
         run: |
-          set -euo pipefail
-          if [ -z "${LIVE_DERIV_TOKEN:-}" ] || [ -z "${DERIV_APP_ID:-}" ]; then
-            echo "Missing LIVE_DERIV_TOKEN or DERIV_APP_ID secret."
-            exit 1
-          fi
+          set -u
+          if [ -z "${LIVE_DERIV_TOKEN:-}" ]; then echo "DIAGNOSIS: LIVE_DERIV_TOKEN is empty"; exit 1; fi
+          if [ -z "${DERIV_APP_ID:-}" ]; then echo "DIAGNOSIS: DERIV_APP_ID is empty"; exit 1; fi
 
-          echo "Checking LIVE Options accounts. No trade/buy/sell request will be sent."
-          response=$(curl -fsS \
-            -H "Authorization: Bearer $LIVE_DERIV_TOKEN" \
-            -H "Deriv-App-ID: $DERIV_APP_ID" \
-            -H "Accept: application/json" \
-            "https://api.derivws.com/trading/v1/options/accounts")
+          echo "DIAGNOSIS: LIVE Options account check only. No buy/sell request is sent."
+          tmp=$(mktemp)
+          code=$(curl -sS -o "$tmp" -w "%{http_code}"             -H "Authorization: Bearer $LIVE_DERIV_TOKEN"             -H "Deriv-App-ID: $DERIV_APP_ID"             -H "Accept: application/json"             "https://api.derivws.com/trading/v1/options/accounts")
 
-          python - <<'PY' "$response"
+          echo "HTTP_STATUS=$code"
+          python - "$tmp" <<'PY'
           import json, sys
-          body = json.loads(sys.argv[1])
+          raw = open(sys.argv[1], encoding="utf-8").read()
+          try:
+              body = json.loads(raw)
+          except Exception:
+              print("DERIV_RESPONSE_NOT_JSON")
+              print(raw[:2000])
+              raise SystemExit(1)
+
+          errors = body.get("errors")
+          if errors:
+              for e in errors:
+                  print("DERIV_ERROR_CODE:", e.get("code"))
+                  print("DERIV_ERROR_MESSAGE:", e.get("message"))
+                  print("DERIV_ERROR_STATUS:", e.get("status"))
+              raise SystemExit(1)
+
           data = body.get("data", [])
           accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
           real = [a for a in accounts if str(a.get("account_type","")).lower() == "real"]
           active = [a for a in real if str(a.get("status","")).lower() == "active"]
           if not active:
-              raise SystemExit("No active REAL Options account returned for this token.")
+              print("No active REAL Options account returned.")
+              raise SystemExit(1)
+
           for a in active:
               print(f"REAL OPTIONS ACCOUNT: {a.get('account_id')} | BALANCE: {a.get('balance')} {a.get('currency','')}")
           print("CHECK COMPLETE: no trade request was sent.")
           PY
+          rm -f "$tmp"
