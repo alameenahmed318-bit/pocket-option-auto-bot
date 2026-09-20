@@ -27,7 +27,7 @@ jobs:
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
           DERIV_SYMBOL: "AUTO"
           STAKE_USD: "1"
-          ACCU_GROWTH_RATE: "0.02"
+          ACCU_GROWTH_RATE: "0.03"
           CLOSE_AFTER_SECONDS: "1"
           MAX_TRADES: "0"
           COOLDOWN_SECONDS: "3"
