@@ -6,8 +6,11 @@ import requests
 import websocket
 
 API_BASE = "https://api.derivws.com"
-DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
-TOKEN = os.getenv("DERIV_TOKEN", "").strip()
+TRADING_MODE = os.getenv("TRADING_MODE", "DEMO").strip().upper()
+if TRADING_MODE not in {"DEMO", "LIVE"}:
+    raise SystemExit("TRADING_MODE must be DEMO or LIVE.")
+DEMO_ONLY = TRADING_MODE == "DEMO"
+TOKEN = os.getenv("LIVE_DERIV_TOKEN" if TRADING_MODE == "LIVE" else "DERIV_TOKEN", "").strip()
 APP_ID = os.getenv("DERIV_APP_ID", "").strip()
 ACCOUNT_ID_OVERRIDE = os.getenv("DERIV_ACCOUNT_ID", "").strip()
 SYMBOL = os.getenv("DERIV_SYMBOL", "AUTO").strip()
@@ -32,8 +35,6 @@ def log(message):
     except Exception:
         pass
 
-if not DEMO_ONLY:
-    raise SystemExit("Safety stop: DEMO_ONLY must remain true.")
 if not TOKEN or not APP_ID:
     raise SystemExit("Missing DERIV_TOKEN or DERIV_APP_ID.")
 
@@ -41,7 +42,7 @@ def auth_headers():
     return {"Authorization": f"Bearer {TOKEN}", "Deriv-App-ID": APP_ID,
             "Content-Type": "application/json", "Accept": "application/json"}
 
-def get_demo_account_id():
+def get_account_id():
     url = f"{API_BASE}/trading/v1/options/accounts"
     last_exc = None
     r = None
@@ -62,22 +63,23 @@ def get_demo_account_id():
         body = r.json()
         data = body.get("data", [])
         accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
-        demos = [a for a in accounts if str(a.get("account_type", "")).lower() == "demo"]
+        target_type = "real" if TRADING_MODE == "LIVE" else "demo"
+        demos = [a for a in accounts if str(a.get("account_type", "")).lower() == target_type]
         if ACCOUNT_ID_OVERRIDE:
             matches = [a for a in demos if str(a.get("account_id", "")).strip() == ACCOUNT_ID_OVERRIDE]
             if not matches:
-                raise RuntimeError("DERIV_ACCOUNT_ID was not found among this token's Demo Options accounts.")
+                raise RuntimeError(f"DERIV_ACCOUNT_ID was not found among this token's {target_type} Options accounts.")
             account = matches[0]
             if str(account.get("status", "")).lower() != "active":
                 raise RuntimeError(f"DERIV_ACCOUNT_ID={ACCOUNT_ID_OVERRIDE} is not active.")
-            log(f"Using FIXED Demo Options account: {ACCOUNT_ID_OVERRIDE} | balance={account.get('balance')} {account.get('currency', '')}")
+            log(f"Using FIXED {TRADING_MODE} Options account: {ACCOUNT_ID_OVERRIDE} | balance={account.get('balance')} {account.get('currency', '')}")
             return ACCOUNT_ID_OVERRIDE
         if demos:
             active = [a for a in demos if str(a.get("status", "")).lower() == "active"]
             account = active[0] if active else demos[0]
             account_id = str(account.get("account_id", "")).strip()
             if account_id:
-                log(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
+                log(f"Using {TRADING_MODE} Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
                 return account_id
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
     if r.status_code == 404:
@@ -86,21 +88,21 @@ def get_demo_account_id():
                                 timeout=20)
         if not create.ok:
             if create.status_code == 403 and "scope" in create.text.lower():
-                raise RuntimeError("Deriv token is missing the account_manage scope. Create a new Deriv PAT with BOTH trade and account_manage scopes, then replace the GitHub Secret DERIV_TOKEN.")
-            raise RuntimeError(f"Deriv Demo Options account creation failed with HTTP {create.status_code}: {create.text}")
+                raise RuntimeError("Deriv token is missing the account_manage scope. Create a PAT with the required account scope, then update the appropriate GitHub secret.")
+            raise RuntimeError(f"Deriv Options account creation failed with HTTP {create.status_code}: {create.text}")
         body = create.json()
         data = body.get("data", [])
         accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
         demos = [a for a in accounts if str(a.get("account_type", "")).lower() == "demo"]
         if not demos:
-            raise RuntimeError(f"No Demo Options account was returned: {body}")
+            raise RuntimeError(f"No {TRADING_MODE} Options account was returned: {body}")
         account_id = str(demos[0].get("account_id", "")).strip()
         if not account_id:
             raise RuntimeError(f"Demo account response has no account_id: {demos[0]}")
-        log(f"Using Demo Options account: {account_id} | balance={demos[0].get('balance')} {demos[0].get('currency', '')}")
+        log(f"Using {TRADING_MODE} Options account: {account_id} | balance={demos[0].get('balance')} {demos[0].get('currency', '')}")
         return account_id
     if r.status_code == 403 and "scope" in r.text.lower():
-        raise RuntimeError("Deriv token is missing the trade scope. Create a new Deriv PAT with the trade scope and update DERIV_TOKEN.")
+        raise RuntimeError("Deriv token is missing the trade scope. Create a PAT with the trade scope and update the appropriate GitHub secret.")
     raise RuntimeError(f"Deriv Demo Options account lookup failed with HTTP {r.status_code}: {r.text}")
 
 def get_ws_url(account_id):
@@ -199,8 +201,8 @@ def signal(prices):
     return spread <= 0.006 and 25 <= momentum <= 75 and vol <= 0.0015, fast, slow, momentum, vol
 
 def main():
-    log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | profit_target=${PROFIT_TARGET_USD:.2f} | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
-    account_id = get_demo_account_id()
+    log(f"DERIV ACCUMULATOR {TRADING_MODE} BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | profit_target=${PROFIT_TARGET_USD:.2f} | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
+    account_id = get_account_id()
     client = None
     trades = 0
     day_pnl = 0.0
@@ -239,14 +241,14 @@ def main():
         ready=[s for s,h in histories.items() if len(h)>=40]
         print(f"READY SYMBOLS ({len(ready)}): {', '.join(ready[:80])}")
         if not ready:
-            print("BOT STOPPED: no active symbol supplied enough live ticks. No Demo contract was purchased."); return
+            print("BOT STOPPED: no active symbol supplied enough live ticks. No contract was purchased."); return
         ranked=sorted(ready,key=lambda s: stability_score(list(histories[s])) if stability_score(list(histories[s])) is not None else 999.0)
         selected=ranked[:max(1,min(STABLE_MARKETS_LIMIT,len(ranked)))]
         log(f"STABLE MARKET SELECTION: {', '.join(selected)} | selected_by_lowest_recent_tick_volatility")
         while (MAX_TRADES<=0 or trades<MAX_TRADES) and day_pnl>-MAX_DAILY_LOSS:
             try: msg=client.recv_json(timeout=30)
             except ConnectionError:
-                print("WebSocket closed. Reconnecting to continue Demo test...")
+                print("WebSocket closed. Reconnecting to continue {TRADING_MODE} test...")
                 client.close(); client=connect(account_id); symbols=get_available_symbols(client)
                 histories={s:deque(maxlen=120) for s in symbols}
                 for s in symbols: client.send({"ticks":s,"subscribe":1})
@@ -272,7 +274,7 @@ def main():
             contract_id=bought["contract_id"]; buy_time=time.time()
             buy_price=float(bought.get("buy_price",proposal.get("ask_price",STAKE)) or STAKE)
             trades+=1
-            log("DEMO ACCUMULATOR PURCHASED {}/{}: {} growth={:.2%} contract={} buy_price={} account={}".format(trades,MAX_TRADES,symbol,ACCU_GROWTH_RATE,contract_id,buy_price,account_id))
+            log("{TRADING_MODE} ACCUMULATOR PURCHASED {}/{}: {} growth={:.2%} contract={} buy_price={} account={}".format(trades,MAX_TRADES,symbol,ACCU_GROWTH_RATE,contract_id,buy_price,account_id))
             client.send({"proposal_open_contract":1,"contract_id":contract_id,"subscribe":1})
             while True:
                 try: update=client.recv_json(timeout=30)
