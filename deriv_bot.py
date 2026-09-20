@@ -36,7 +36,7 @@ def log(message):
         pass
 
 if not TOKEN or not APP_ID:
-    raise SystemExit("Missing DERIV_TOKEN or DERIV_APP_ID.")
+    raise SystemExit(f"Missing {'LIVE_DERIV_TOKEN' if TRADING_MODE == 'LIVE' else 'DERIV_TOKEN'} or DERIV_APP_ID.")
 
 def auth_headers():
     return {"Authorization": f"Bearer {TOKEN}", "Deriv-App-ID": APP_ID,
@@ -83,6 +83,8 @@ def get_account_id():
                 return account_id
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
     if r.status_code == 404:
+        if TRADING_MODE == "LIVE":
+            raise RuntimeError("No existing real Options account was returned for this LIVE token. No account will be created automatically in LIVE mode.")
         create = requests.post(url, headers=auth_headers(),
                                 json={"currency": "USD", "group": "row", "account_type": "demo"},
                                 timeout=20)
