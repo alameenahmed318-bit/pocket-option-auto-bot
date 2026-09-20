@@ -81,6 +81,12 @@ def get_account_id():
             if account_id:
                 log(f"Using {TRADING_MODE} Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
                 return account_id
+        visible_types = sorted({str(a.get("account_type", "")).lower() for a in accounts if isinstance(a, dict)})
+        if TRADING_MODE == "LIVE":
+            raise RuntimeError(
+                f"LIVE account not available to this token. Deriv returned account types={visible_types}; "
+                "no Real Options account was returned. No trade was placed."
+            )
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
     if r.status_code == 404:
         if TRADING_MODE == "LIVE":
