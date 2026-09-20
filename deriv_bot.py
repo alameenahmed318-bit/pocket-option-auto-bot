@@ -18,7 +18,8 @@ COOLDOWN = float(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 ACCU_GROWTH_RATE = float(os.getenv("ACCU_GROWTH_RATE", "0.03"))
-CLOSE_AFTER_SECONDS = float(os.getenv("CLOSE_AFTER_SECONDS", "3"))
+CLOSE_AFTER_SECONDS = float(os.getenv("CLOSE_AFTER_SECONDS", "2"))
+PROFIT_TARGET_USD = float(os.getenv("PROFIT_TARGET_USD", "0.02"))
 STABLE_MARKETS_LIMIT = int(os.getenv("STABLE_MARKETS_LIMIT", "5"))
 LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
 
@@ -198,7 +199,7 @@ def signal(prices):
     return spread <= 0.003 and 35 <= momentum <= 65 and vol <= 0.0008, fast, slow, momentum, vol
 
 def main():
-    log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
+    log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | profit_target=${PROFIT_TARGET_USD:.2f} | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
     account_id = get_demo_account_id()
     client = None
     trades = 0
@@ -285,8 +286,20 @@ def main():
                     pnl=float(c.get("profit",0) or 0); day_pnl+=pnl
                     log(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f} contract={contract_id}"); break
                 elapsed=time.time()-buy_time
+                profit=float(c.get("profit",0) or 0)
+                if profit>=PROFIT_TARGET_USD:
+                    print("PROFIT TARGET: +${:.2f} reached at {:.2f}s; selling Accumulator now.".format(profit,elapsed))
+                    sell_rid=client.send({"sell":contract_id,"price":0})
+                    try:
+                        sold=client.recv_for(sell_rid,"sell",timeout=10)["sell"]
+                        sold_for=float(sold.get("sold_for",buy_price) or buy_price)
+                        pnl=sold_for-buy_price; day_pnl+=pnl
+                        log("ACCU CLOSED AT PROFIT TARGET {:.2f}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(elapsed,symbol,pnl,sold_for,day_pnl,contract_id))
+                        break
+                    except Exception as exc:
+                        print("ACCU PROFIT SELL FAILED: {}. Waiting for a later tick before retrying.".format(exc))
+                        continue
                 if elapsed>=CLOSE_AFTER_SECONDS:
-                    profit=float(c.get("profit",0) or 0)
                     print("CLOSE TIMER: {:.2f}s reached; profit={:+.2f}; selling Accumulator.".format(elapsed,profit))
                     sell_rid=client.send({"sell":contract_id,"price":0})
                     try:
