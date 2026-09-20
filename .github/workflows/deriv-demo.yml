@@ -2,8 +2,10 @@ name: Deriv Demo Bot
 
 on:
   workflow_dispatch:
+  # Keep one long-lived runner alive. GitHub-hosted jobs have a hard 6-hour limit,
+  # so the next scheduled run takes over after this run reaches its limit.
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "7 */6 * * *"
 
 concurrency:
   group: deriv-demo-bot
@@ -19,7 +21,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-deriv.txt
-      - name: Run Deriv demo bot
+      - name: Run Deriv demo bot with automatic crash recovery
         env:
           DEMO_ONLY: "true"
           DRY_RUN: "false"
@@ -34,7 +36,17 @@ jobs:
           COOLDOWN_SECONDS: "2"
           STABLE_MARKETS_LIMIT: "5"
           MAX_DAILY_LOSS_USD: "50"
-        run: python -u deriv_bot.py
+        run: |
+          set +e
+          restart_count=0
+          while true; do
+            restart_count=$((restart_count + 1))
+            echo "=== DERIV BOT SUPERVISOR START #$restart_count ==="
+            python -u deriv_bot.py
+            rc=$?
+            echo "=== DERIV BOT EXITED rc=$rc; automatic restart in 5s ==="
+            sleep 5
+          done
       - name: Upload Deriv trade log
         if: always()
         uses: actions/upload-artifact@v4
