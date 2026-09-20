@@ -30,7 +30,7 @@ jobs:
           DURATION_SECONDS: "60"
           MAX_TRADES: "100"
           COOLDOWN_SECONDS: "30"
-          MAX_DAILY_LOSS_USD: "15"
+          MAX_DAILY_LOSS_USD: "50"
           EARLY_PROFIT_SECONDS: "1"
           TAKE_PROFIT_USD: "0.20"
         run: python -u deriv_bot.py
