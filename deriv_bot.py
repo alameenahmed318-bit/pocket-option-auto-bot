@@ -236,7 +236,7 @@ def signal(prices):
     return stable, fast, slow, momentum
 
 def main():
-    log(f"DERIV DEMO BOT | symbols={SYMBOL} | stake={STAKE} | duration={DURATION}s | DRY_RUN={DRY_RUN}")
+    log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | DRY_RUN={DRY_RUN}")
 
     account_id = get_demo_account_id()
     client = None
@@ -360,7 +360,7 @@ def main():
             try:
                 proposal = client.recv_for(rid, "proposal", timeout=15)["proposal"]
             except Exception as exc:
-                print(f"PROPOSAL FAILED {symbol} {action}: {exc}")
+                print(f"ACCU PROPOSAL FAILED {symbol}: {exc}")
                 continue
 
             log("ACCU PROPOSAL {} growth={:.2%} id={} ask={} payout={}".format(
@@ -369,7 +369,7 @@ def main():
 
             if DRY_RUN:
                 trades += 1
-                print(f"DRY_RUN=true: proposal only; simulated test {trades}/{MAX_TRADES}.")
+                print(f"DRY_RUN=true: Accumulator proposal only; simulated test {trades}/{MAX_TRADES}.")
                 continue
 
             rid = client.send({
@@ -379,7 +379,7 @@ def main():
             try:
                 bought = client.recv_for(rid, "buy", timeout=15)["buy"]
             except Exception as exc:
-                print(f"BUY FAILED {symbol} {action}: {exc}")
+                print(f"ACCU BUY FAILED {symbol}: {exc}")
                 continue
 
             contract_id = bought["contract_id"]
