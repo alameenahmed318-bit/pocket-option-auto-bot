@@ -18,7 +18,7 @@ COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 ACCU_GROWTH_RATE = float(os.getenv("ACCU_GROWTH_RATE", "0.03"))
-CLOSE_AFTER_SECONDS = int(os.getenv("CLOSE_AFTER_SECONDS", "3"))
+CLOSE_AFTER_SECONDS = float(os.getenv("CLOSE_AFTER_SECONDS", "3"))
 LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
 
 
@@ -46,10 +46,6 @@ def auth_headers():
 
 def get_demo_account_id():
     url = f"{API_BASE}/trading/v1/options/accounts"
-
-    # GitHub-hosted runners can occasionally get a TCP/TLS reset while
-    # reaching Deriv's REST API. Retry transient network/5xx/429 failures
-    # before treating the account lookup as a real API failure.
     last_exc = None
     r = None
     for attempt in range(1, 6):
@@ -182,11 +178,10 @@ def connect(account_id):
     client = Client(get_ws_url(account_id))
     rid = client.send({"balance": 1})
     balance_msg = client.recv_for(rid, "balance")
-    log(f"CONNECTED account_balance={balance_msg["balance"]}")
+    log(f"CONNECTED account_balance={balance_msg['balance']}")
     return client
 
 def get_available_symbols(client):
-    # Fetch markets that support Accumulator contracts.
     rid = client.send({
         "active_symbols": "brief",
         "contract_type": ["ACCU"],
@@ -205,11 +200,9 @@ def get_available_symbols(client):
             continue
         names.append(symbol)
 
-    # If a specific symbol was requested, keep it only when it is currently open.
     if SYMBOL and SYMBOL.upper() != "AUTO":
         names = [s for s in names if s == SYMBOL]
 
-    # Stable order and no duplicates.
     names = list(dict.fromkeys(names))
     print(f"OPEN ACCUMULATOR SYMBOLS ({len(names)}): {', '.join(names[:80])}")
     return names
@@ -235,7 +228,6 @@ def rsi(values, n=14):
     return 100.0 if al == 0 else 100 - (100 / (1 + ag / al))
 
 def signal(prices):
-    """Accumulator entry filter: prefer relatively stable/range-bound conditions."""
     fast, slow = ema(prices, 9), ema(prices, 21)
     momentum = rsi(prices, 14)
     if fast is None or slow is None or momentum is None or not prices:
@@ -273,7 +265,6 @@ def main():
             print("NO OPEN ACCUMULATOR SYMBOLS: nothing to trade right now.")
             return
 
-        # Keep a small independent tick history for every open symbol.
         histories = {symbol: deque(maxlen=120) for symbol in symbols}
         subscribed = 0
         for symbol in symbols:
@@ -285,8 +276,6 @@ def main():
 
         print(f"SUBSCRIBED TO {subscribed} SYMBOLS. Scanning all available markets.")
 
-        # Warm up each symbol independently. One slow/quiet market must not block
-        # the other open markets from becoming tradable.
         warmup_deadline = time.time() + 120
         while time.time() < warmup_deadline and any(len(v) < 40 for v in histories.values()):
             try:
@@ -311,7 +300,6 @@ def main():
 
             ready_now = [s for s, h in histories.items() if len(h) >= 40]
             if ready_now:
-                # Do not wait for every market. Start scanning immediately.
                 print(f"READY {symbol} ({len(histories[symbol])} ticks) | ACTIVE READY MARKETS={len(ready_now)}")
 
         ready = [s for s, h in histories.items() if len(h) >= 40]
@@ -322,9 +310,6 @@ def main():
 
         print(f"CONTINUOUS MODE: scanning {len(ready)} ready open supported symbols until the daily risk limit (MAX_TRADES=0 means no trade-count limit).")
 
-        # Prevent repeated signals on the same symbol/direction until a new
-        # tick arrives after the cooldown, and report non-signals for visibility.
-        last_signal_key = None
         while (MAX_TRADES <= 0 or trades < MAX_TRADES) and day_pnl > -MAX_DAILY_LOSS:
             try:
                 msg = client.recv_json(timeout=30)
