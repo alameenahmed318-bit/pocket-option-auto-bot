@@ -28,9 +28,9 @@ jobs:
           DERIV_SYMBOL: "AUTO"
           STAKE_USD: "2"
           ACCU_GROWTH_RATE: "0.03"
-          CLOSE_AFTER_SECONDS: "3"
+          CLOSE_AFTER_SECONDS: "2"
           MAX_TRADES: "0"
-          COOLDOWN_SECONDS: "10"
+          COOLDOWN_SECONDS: "5"
           MAX_DAILY_LOSS_USD: "50"
         run: python -u deriv_bot.py
       - name: Upload Deriv trade log
