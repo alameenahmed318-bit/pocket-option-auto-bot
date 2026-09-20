@@ -1,0 +1,36 @@
+name: Deriv Live Bot Preparation
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deriv-live-bot-prep
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-deriv.txt
+      - name: LIVE preparation - no real trade
+        env:
+          TRADING_MODE: "LIVE"
+          DRY_RUN: "true"
+          LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
+          DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
+          DERIV_ACCOUNT_ID: ${{ secrets.DERIV_ACCOUNT_ID }}
+          DERIV_SYMBOL: "AUTO"
+          STAKE_USD: "1"
+          ACCU_GROWTH_RATE: "0.03"
+          CLOSE_AFTER_SECONDS: "2"
+          PROFIT_TARGET_USD: "0.02"
+          MAX_TRADES: "1"
+          COOLDOWN_SECONDS: "30"
+          STABLE_MARKETS_LIMIT: "5"
+          MAX_DAILY_LOSS_USD: "15"
+        run: python -u deriv_bot.py
