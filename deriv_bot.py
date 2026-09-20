@@ -247,6 +247,8 @@ def main():
 
         print(f"SUBSCRIBED TO {subscribed} SYMBOLS. Scanning all available markets.")
 
+        # Warm up each symbol independently. One slow/quiet market must not block
+        # the other open markets from becoming tradable.
         warmup_deadline = time.time() + 120
         while time.time() < warmup_deadline and any(len(v) < 40 for v in histories.values()):
             try:
@@ -269,13 +271,22 @@ def main():
             if symbol in histories and quote is not None:
                 histories[symbol].append(float(quote))
 
+            ready_now = [s for s, h in histories.items() if len(h) >= 40]
+            if ready_now:
+                # Do not wait for every market. Start scanning immediately.
+                print(f"READY {symbol} ({len(histories[symbol])} ticks) | ACTIVE READY MARKETS={len(ready_now)}")
+
         ready = [s for s, h in histories.items() if len(h) >= 40]
         print(f"READY SYMBOLS ({len(ready)}): {', '.join(ready[:80])}")
         if not ready:
             print("BOT STOPPED: no active symbol supplied enough live ticks. No Demo contract was purchased.")
             return
 
-        print("CONTINUOUS MODE: scanning every open supported symbol until 10 trades or the risk limit.")
+        print(f"CONTINUOUS MODE: scanning {len(ready)} ready open supported symbols until {MAX_TRADES} trades or the risk limit.")
+
+        # Prevent repeated signals on the same symbol/direction until a new
+        # tick arrives after the cooldown, and report non-signals for visibility.
+        last_signal_key = None
         while trades < MAX_TRADES and day_pnl > -MAX_DAILY_LOSS:
             try:
                 msg = client.recv_json(timeout=30)
