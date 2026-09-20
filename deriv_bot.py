@@ -310,12 +310,12 @@ def main():
             print("BOT STOPPED: no active symbol supplied enough live ticks. No Demo contract was purchased.")
             return
 
-        print(f"CONTINUOUS MODE: scanning {len(ready)} ready open supported symbols until {MAX_TRADES} trades or the risk limit.")
+        print(f"CONTINUOUS MODE: scanning {len(ready)} ready open supported symbols until the daily risk limit (MAX_TRADES=0 means no trade-count limit).")
 
         # Prevent repeated signals on the same symbol/direction until a new
         # tick arrives after the cooldown, and report non-signals for visibility.
         last_signal_key = None
-        while trades < MAX_TRADES and day_pnl > -MAX_DAILY_LOSS:
+        while (MAX_TRADES <= 0 or trades < MAX_TRADES) and day_pnl > -MAX_DAILY_LOSS:
             try:
                 msg = client.recv_json(timeout=30)
             except ConnectionError:
