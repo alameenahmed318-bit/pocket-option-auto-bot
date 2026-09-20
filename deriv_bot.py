@@ -9,6 +9,7 @@ API_BASE = "https://api.derivws.com"
 DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
 TOKEN = os.getenv("DERIV_TOKEN", "").strip()
 APP_ID = os.getenv("DERIV_APP_ID", "").strip()
+ACCOUNT_ID_OVERRIDE = os.getenv("DERIV_ACCOUNT_ID", "").strip()
 SYMBOL = os.getenv("DERIV_SYMBOL", "AUTO").strip()
 STAKE = float(os.getenv("STAKE_USD", "1"))
 DURATION = int(os.getenv("DURATION_SECONDS", "60"))
@@ -71,6 +72,15 @@ def get_demo_account_id():
         data = body.get("data", [])
         accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
         demos = [a for a in accounts if str(a.get("account_type", "")).lower() == "demo"]
+        if ACCOUNT_ID_OVERRIDE:
+            matches = [a for a in demos if str(a.get("account_id", "")).strip() == ACCOUNT_ID_OVERRIDE]
+            if not matches:
+                raise RuntimeError("DERIV_ACCOUNT_ID was not found among this token's Demo Options accounts.")
+            account = matches[0]
+            if str(account.get("status", "")).lower() != "active":
+                raise RuntimeError(f"DERIV_ACCOUNT_ID={ACCOUNT_ID_OVERRIDE} is not active.")
+            log(f"Using FIXED Demo Options account: {ACCOUNT_ID_OVERRIDE} | balance={account.get('balance')} {account.get('currency', '')}")
+            return ACCOUNT_ID_OVERRIDE
         if demos:
             active = [a for a in demos if str(a.get("status", "")).lower() == "active"]
             account = active[0] if active else demos[0]
@@ -414,9 +424,21 @@ def main():
                     day_pnl += pnl
                     log(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f} contract={contract_id}")
                     try:
+                        prid = client.send({"profit_table": 1, "limit": 50, "sort": "DESC"})
+                        profit_msg = client.recv_for(prid, "profit_table", timeout=10).get("profit_table", {})
+                        contracts = profit_msg.get("transactions", []) if isinstance(profit_msg, dict) else []
+                        match = next((x for x in contracts if str(x.get("contract_id")) == str(contract_id)), None)
+                        if match:
+                            log(f"PROFIT_TABLE_CONFIRMED account={account_id} contract={contract_id} symbol={symbol} profit={match.get('profit')} buy_price={match.get('buy_price')} sell_price={match.get('sell_price')}")
+                        else:
+                            log(f"PROFIT_TABLE_NOT_FOUND account={account_id} contract={contract_id} checked={len(contracts)}")
+                    except Exception as exc:
+                        log(f"PROFIT_TABLE CHECK FAILED after close: {exc}")
+                    try:
                         srid = client.send({"statement": 1, "description": 1, "limit": 20, "action_type": "sell"})
                         stmt = client.recv_for(srid, "statement", timeout=10).get("statement", {})
-                        log(f"STATEMENT_AFTER_CLOSE account={account_id} entries={len(stmt.get("transactions", [])) if isinstance(stmt, dict) else 0}")
+                        txns = stmt.get("transactions", []) if isinstance(stmt, dict) else []
+                        log(f"STATEMENT_AFTER_CLOSE account={account_id} transactions={len(txns)}")
                     except Exception as exc:
                         log(f"STATEMENT CHECK FAILED after close: {exc}")
                     break
