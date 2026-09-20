@@ -44,7 +44,26 @@ def auth_headers():
 
 def get_demo_account_id():
     url = f"{API_BASE}/trading/v1/options/accounts"
-    r = requests.get(url, headers=auth_headers(), timeout=20)
+
+    # GitHub-hosted runners can occasionally get a TCP/TLS reset while
+    # reaching Deriv's REST API. Retry transient network/5xx/429 failures
+    # before treating the account lookup as a real API failure.
+    last_exc = None
+    r = None
+    for attempt in range(1, 6):
+        try:
+            r = requests.get(url, headers=auth_headers(), timeout=20)
+            if r.ok or r.status_code not in (429, 500, 502, 503, 504):
+                break
+            log(f"ACCOUNT LOOKUP HTTP {r.status_code}; retry {attempt}/5")
+        except requests.RequestException as exc:
+            last_exc = exc
+            log(f"ACCOUNT LOOKUP NETWORK ERROR attempt {attempt}/5: {exc}")
+        if attempt < 5:
+            time.sleep(min(2 ** (attempt - 1), 10))
+
+    if r is None:
+        raise RuntimeError(f"Deriv account lookup failed after 5 attempts: {last_exc}")
 
     if r.ok:
         body = r.json()
