@@ -14,11 +14,12 @@ SYMBOL = os.getenv("DERIV_SYMBOL", "AUTO").strip()
 STAKE = float(os.getenv("STAKE_USD", "1"))
 DURATION = int(os.getenv("DURATION_SECONDS", "60"))
 MAX_TRADES = int(os.getenv("MAX_TRADES", "100"))
-COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
+COOLDOWN = float(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 ACCU_GROWTH_RATE = float(os.getenv("ACCU_GROWTH_RATE", "0.03"))
 CLOSE_AFTER_SECONDS = float(os.getenv("CLOSE_AFTER_SECONDS", "3"))
+STABLE_MARKETS_LIMIT = int(os.getenv("STABLE_MARKETS_LIMIT", "5"))
 LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
 
 
@@ -227,18 +228,27 @@ def rsi(values, n=14):
     ag, al = sum(gains) / n, sum(losses) / n
     return 100.0 if al == 0 else 100 - (100 / (1 + ag / al))
 
+def stability_score(prices):
+    if len(prices) < 40:
+        return None
+    base = prices[-1] or 1.0
+    returns = [(b - a) / base for a, b in zip(prices[-30:-1], prices[-29:])]
+    mean_abs = sum(abs(x) for x in returns) / len(returns)
+    return mean_abs
+
 def signal(prices):
     fast, slow = ema(prices, 9), ema(prices, 21)
     momentum = rsi(prices, 14)
-    if fast is None or slow is None or momentum is None or not prices:
-        return False, fast, slow, momentum
+    vol = stability_score(prices)
+    if fast is None or slow is None or momentum is None or vol is None or not prices:
+        return False, fast, slow, momentum, vol
     spot = float(prices[-1])
     spread = abs(fast - slow) / spot if spot else 999.0
-    stable = spread <= 0.003 and 35 <= momentum <= 65
-    return stable, fast, slow, momentum
+    stable = spread <= 0.003 and 35 <= momentum <= 65 and vol <= 0.0008
+    return stable, fast, slow, momentum, vol
 
 def main():
-    log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | DRY_RUN={DRY_RUN}")
+    log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
 
     account_id = get_demo_account_id()
     client = None
@@ -308,7 +318,12 @@ def main():
             print("BOT STOPPED: no active symbol supplied enough live ticks. No Demo contract was purchased.")
             return
 
-        print(f"CONTINUOUS MODE: scanning {len(ready)} ready open supported symbols until the daily risk limit (MAX_TRADES=0 means no trade-count limit).")
+        ranked = sorted(
+            ready,
+            key=lambda s: stability_score(list(histories[s])) if stability_score(list(histories[s])) is not None else 999.0
+        )
+        selected = ranked[:max(1, min(STABLE_MARKETS_LIMIT, len(ranked)))]
+        log(f"STABLE MARKET SELECTION: {', '.join(selected)} | selected_by_lowest_recent_tick_volatility")
 
         while (MAX_TRADES <= 0 or trades < MAX_TRADES) and day_pnl > -MAX_DAILY_LOSS:
             try:
@@ -333,15 +348,17 @@ def main():
                 continue
             histories[symbol].append(float(quote))
 
+            if symbol not in selected:
+                continue
             if time.time() - last_trade < COOLDOWN:
                 continue
 
-            stable, fast, slow, momentum = signal(list(histories[symbol]))
+            stable, fast, slow, momentum, vol = signal(list(histories[symbol]))
             if not stable:
                 continue
 
-            log("ACCU SIGNAL {} growth={:.2%} EMA9={:.6f} EMA21={:.6f} RSI14={:.2f}".format(
-                symbol, ACCU_GROWTH_RATE, fast, slow, momentum))
+            log("ACCU SIGNAL {} growth={:.2%} EMA9={:.6f} EMA21={:.6f} RSI14={:.2f} tick_vol={:.6f}".format(
+                symbol, ACCU_GROWTH_RATE, fast, slow, momentum, vol))
 
             rid = client.send({
                 "proposal": 1,
@@ -408,38 +425,20 @@ def main():
                     pnl = float(c.get("profit", 0) or 0)
                     day_pnl += pnl
                     log(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f} contract={contract_id}")
-                    try:
-                        prid = client.send({"profit_table": 1, "limit": 50, "sort": "DESC"})
-                        profit_msg = client.recv_for(prid, "profit_table", timeout=10).get("profit_table", {})
-                        contracts = profit_msg.get("transactions", []) if isinstance(profit_msg, dict) else []
-                        match = next((x for x in contracts if str(x.get("contract_id")) == str(contract_id)), None)
-                        if match:
-                            log(f"PROFIT_TABLE_CONFIRMED account={account_id} contract={contract_id} symbol={symbol} profit={match.get('profit')} buy_price={match.get('buy_price')} sell_price={match.get('sell_price')}")
-                        else:
-                            log(f"PROFIT_TABLE_NOT_FOUND account={account_id} contract={contract_id} checked={len(contracts)}")
-                    except Exception as exc:
-                        log(f"PROFIT_TABLE CHECK FAILED after close: {exc}")
-                    try:
-                        srid = client.send({"statement": 1, "description": 1, "limit": 20, "action_type": "sell"})
-                        stmt = client.recv_for(srid, "statement", timeout=10).get("statement", {})
-                        txns = stmt.get("transactions", []) if isinstance(stmt, dict) else []
-                        log(f"STATEMENT_AFTER_CLOSE account={account_id} transactions={len(txns)}")
-                    except Exception as exc:
-                        log(f"STATEMENT CHECK FAILED after close: {exc}")
                     break
 
                 elapsed = time.time() - buy_time
                 if elapsed >= CLOSE_AFTER_SECONDS:
                     profit = float(c.get("profit", 0) or 0)
-                    print("CLOSE TIMER: {:.1f}s reached; selling Accumulator now (profit={:+.2f}).".format(elapsed, profit))
+                    print("CLOSE TIMER: {:.2f}s reached; selling Accumulator now (profit={:+.2f}).".format(elapsed, profit))
                     sell_rid = client.send({"sell": contract_id, "price": 0})
                     try:
                         sold = client.recv_for(sell_rid, "sell", timeout=10)["sell"]
                         sold_for = float(sold.get("sold_for", buy_price) or buy_price)
                         pnl = sold_for - buy_price
                         day_pnl += pnl
-                        log("ACCU CLOSED AFTER {}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(
-                            CLOSE_AFTER_SECONDS, symbol, pnl, sold_for, day_pnl, contract_id))
+                        log("ACCU CLOSED AFTER {:.2f}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(
+                            elapsed, symbol, pnl, sold_for, day_pnl, contract_id))
                     except Exception as exc:
                         print("ACCU SELL FAILED: {}. Waiting for contract to close normally.".format(exc))
                     break
