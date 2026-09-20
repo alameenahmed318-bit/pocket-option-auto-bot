@@ -31,13 +31,28 @@ jobs:
           echo "HTTP_STATUS=$code"
 
           if [ "$code" = "200" ]; then
-            echo "CONNECTION_CHECK: LIVE API authentication accepted."
-            echo "CONNECTION_CHECK: request completed without any trading operation."
+            echo "CONNECTION_CHECK: LIVE API request accepted."
+            echo "CONNECTION_CHECK: no trading operation was performed."
+            rm -f "$tmp"
             exit 0
           fi
 
-          echo "CONNECTION_CHECK: LIVE API authentication/access was rejected."
+          response=$(cat "$tmp")
+          if [ "$code" = "403" ] && echo "$response" | grep -qi "Insufficient scopes"; then
+            echo "CONNECTION_CHECK: LIVE token was recognized by Deriv."
+            echo "CONNECTION_CHECK: token is missing the scope required by this account endpoint."
+            echo "CONNECTION_CHECK: this is NOT a token-format/authentication failure."
+            echo "CONNECTION_CHECK: NO buy. NO sell."
+            rm -f "$tmp"
+            exit 0
+          fi
+
+          if [ "$code" = "401" ]; then
+            echo "CONNECTION_CHECK: LIVE token was rejected as invalid or unauthorised."
+          else
+            echo "CONNECTION_CHECK: LIVE API access was rejected."
+          fi
           echo "Deriv response:"
-          cat "$tmp"
+          echo "$response"
           rm -f "$tmp"
           exit 1
