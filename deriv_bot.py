@@ -16,8 +16,8 @@ MAX_TRADES = int(os.getenv("MAX_TRADES", "100"))
 COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-EARLY_PROFIT_SECONDS = int(os.getenv("EARLY_PROFIT_SECONDS", "1"))
-TAKE_PROFIT_USD = float(os.getenv("TAKE_PROFIT_USD", "0.20"))
+ACCU_GROWTH_RATE = float(os.getenv("ACCU_GROWTH_RATE", "0.03"))
+CLOSE_AFTER_SECONDS = int(os.getenv("CLOSE_AFTER_SECONDS", "3"))
 LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
 
 
@@ -176,11 +176,10 @@ def connect(account_id):
     return client
 
 def get_available_symbols(client):
-    # Deriv returns the currently active underlying markets. Asking for CALL/PUT
-    # support keeps the list compatible with this bot's digital-option strategy.
+    # Fetch markets that support Accumulator contracts.
     rid = client.send({
         "active_symbols": "brief",
-        "contract_type": ["CALL", "PUT"],
+        "contract_type": ["ACCU"],
     })
     msg = client.recv_for(rid, "active_symbols", timeout=30)
     symbols = msg.get("active_symbols", [])
@@ -226,15 +225,15 @@ def rsi(values, n=14):
     return 100.0 if al == 0 else 100 - (100 / (1 + ag / al))
 
 def signal(prices):
+    """Accumulator entry filter: prefer relatively stable/range-bound conditions."""
     fast, slow = ema(prices, 9), ema(prices, 21)
     momentum = rsi(prices, 14)
-    if fast is None or slow is None or momentum is None:
-        return None, fast, slow, momentum
-    if fast > slow and 45 <= momentum <= 75:
-        return "CALL", fast, slow, momentum
-    if fast < slow and 25 <= momentum <= 55:
-        return "PUT", fast, slow, momentum
-    return None, fast, slow, momentum
+    if fast is None or slow is None or momentum is None or not prices:
+        return False, fast, slow, momentum
+    spot = float(prices[-1])
+    spread = abs(fast - slow) / spot if spot else 999.0
+    stable = spread <= 0.003 and 35 <= momentum <= 65
+    return stable, fast, slow, momentum
 
 def main():
     log(f"DERIV DEMO BOT | symbols={SYMBOL} | stake={STAKE} | duration={DURATION}s | DRY_RUN={DRY_RUN}")
@@ -342,21 +341,21 @@ def main():
             if time.time() - last_trade < COOLDOWN:
                 continue
 
-            action, fast, slow, momentum = signal(list(histories[symbol]))
-            if not action:
+            stable, fast, slow, momentum = signal(list(histories[symbol]))
+            if not stable:
                 continue
 
-            log(f"SIGNAL {symbol} {action} EMA9={fast:.6f} EMA21={slow:.6f} RSI14={momentum:.2f}")
+            log("ACCU SIGNAL {} growth={:.2%} EMA9={:.6f} EMA21={:.6f} RSI14={:.2f}".format(
+                symbol, ACCU_GROWTH_RATE, fast, slow, momentum))
 
             rid = client.send({
                 "proposal": 1,
                 "amount": STAKE,
                 "basis": "stake",
-                "contract_type": action,
+                "contract_type": "ACCU",
                 "currency": "USD",
-                "duration": DURATION,
-                "duration_unit": "s",
                 "underlying_symbol": symbol,
+                "growth_rate": ACCU_GROWTH_RATE,
             })
             try:
                 proposal = client.recv_for(rid, "proposal", timeout=15)["proposal"]
@@ -364,7 +363,8 @@ def main():
                 print(f"PROPOSAL FAILED {symbol} {action}: {exc}")
                 continue
 
-            log(f"PROPOSAL {symbol} {action} id={proposal.get("id")} ask={proposal["ask_price"]} payout={proposal.get("payout")}")
+            log("ACCU PROPOSAL {} growth={:.2%} id={} ask={} payout={}".format(
+                symbol, ACCU_GROWTH_RATE, proposal.get("id"), proposal["ask_price"], proposal.get("payout")))
             last_trade = time.time()
 
             if DRY_RUN:
@@ -386,7 +386,8 @@ def main():
             buy_time = time.time()
             buy_price = float(bought.get("buy_price", proposal.get("ask_price", STAKE)) or STAKE)
             trades += 1
-            log(f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: {symbol} {action} contract={contract_id} buy_price={buy_price} account={account_id}")
+            log("DEMO ACCUMULATOR PURCHASED {}/{}: {} growth={:.2%} contract={} buy_price={} account={}".format(
+                trades, MAX_TRADES, symbol, ACCU_GROWTH_RATE, contract_id, buy_price, account_id))
 
             client.send({
                 "proposal_open_contract": 1,
@@ -421,24 +422,19 @@ def main():
                     break
 
                 elapsed = time.time() - buy_time
-                profit = float(c.get("profit", 0) or 0)
-                if elapsed >= EARLY_PROFIT_SECONDS and profit >= TAKE_PROFIT_USD:
-                    print(f"TAKE PROFIT: +{profit:.2f} after {elapsed:.1f}s (target +${TAKE_PROFIT_USD:.2f}). Selling Demo contract now.")
+                if elapsed >= CLOSE_AFTER_SECONDS:
+                    profit = float(c.get("profit", 0) or 0)
+                    print("CLOSE TIMER: {:.1f}s reached; selling Accumulator now (profit={:+.2f}).".format(elapsed, profit))
                     sell_rid = client.send({"sell": contract_id, "price": 0})
                     try:
                         sold = client.recv_for(sell_rid, "sell", timeout=10)["sell"]
                         sold_for = float(sold.get("sold_for", buy_price) or buy_price)
                         pnl = sold_for - buy_price
                         day_pnl += pnl
-                        log(f"EARLY CLOSED {symbol} pnl={pnl:.2f} sold_for={sold_for:.2f} day_pnl={day_pnl:.2f} contract={contract_id}")
-                        try:
-                            srid = client.send({"statement": 1, "description": 1, "limit": 20, "action_type": "sell"})
-                            stmt = client.recv_for(srid, "statement", timeout=10).get("statement", {})
-                            log(f"STATEMENT_AFTER_EARLY_CLOSE account={account_id} entries={len(stmt.get("transactions", [])) if isinstance(stmt, dict) else 0}")
-                        except Exception as exc:
-                            log(f"STATEMENT CHECK FAILED after early close: {exc}")
+                        log("ACCU CLOSED AFTER {}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(
+                            CLOSE_AFTER_SECONDS, symbol, pnl, sold_for, day_pnl, contract_id))
                     except Exception as exc:
-                        print(f"EARLY SELL FAILED: {exc}. Waiting for normal expiry.")
+                        print("ACCU SELL FAILED: {}. Waiting for contract to close normally.".format(exc))
                     break
 
         log(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
