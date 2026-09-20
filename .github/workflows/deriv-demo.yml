@@ -33,3 +33,10 @@ jobs:
           MAX_DAILY_LOSS_USD: "50"
           EARLY_PROFIT_SECONDS: "5"
         run: python -u deriv_bot.py
+      - name: Upload Deriv trade log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deriv-trade-log-${{ github.run_id }}
+          path: deriv_trades.log
+          if-no-files-found: warn
