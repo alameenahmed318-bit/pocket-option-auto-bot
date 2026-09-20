@@ -201,7 +201,7 @@ def get_available_symbols(client):
 
     # Stable order and no duplicates.
     names = list(dict.fromkeys(names))
-    print(f"OPEN CALL/PUT SYMBOLS ({len(names)}): {', '.join(names[:80])}")
+    print(f"OPEN ACCUMULATOR SYMBOLS ({len(names)}): {', '.join(names[:80])}")
     return names
 
 def ema(values, n):
@@ -260,7 +260,7 @@ def main():
 
         symbols = get_available_symbols(client)
         if not symbols:
-            print("NO OPEN CALL/PUT SYMBOLS: nothing to trade right now.")
+            print("NO OPEN ACCUMULATOR SYMBOLS: nothing to trade right now.")
             return
 
         # Keep a small independent tick history for every open symbol.
