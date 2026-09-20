@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json, os, time
+from datetime import datetime, timezone
 from collections import deque
 import requests
 import websocket
@@ -16,6 +17,17 @@ COOLDOWN = int(os.getenv("COOLDOWN_SECONDS", "30"))
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 EARLY_PROFIT_SECONDS = int(os.getenv("EARLY_PROFIT_SECONDS", "5"))
+LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
+
+
+def log(message):
+    line = f"[{datetime.now(timezone.utc).isoformat()}] {message}"
+    print(line, flush=True)
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 if not DEMO_ONLY:
     raise SystemExit("Safety stop: DEMO_ONLY must remain true.")
@@ -44,7 +56,7 @@ def get_demo_account_id():
             account = active[0] if active else demos[0]
             account_id = str(account.get("account_id", "")).strip()
             if account_id:
-                print(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
+                log(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
                 return account_id
         raise RuntimeError(f"No active Demo Options account was returned: {body}")
 
@@ -73,7 +85,7 @@ def get_demo_account_id():
         account_id = str(account.get("account_id", "")).strip()
         if not account_id:
             raise RuntimeError(f"Demo account response has no account_id: {account}")
-        print(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
+        log(f"Using Demo Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
         return account_id
 
     if r.status_code == 403 and "scope" in r.text.lower():
@@ -140,7 +152,7 @@ def connect(account_id):
     client = Client(get_ws_url(account_id))
     rid = client.send({"balance": 1})
     balance_msg = client.recv_for(rid, "balance")
-    print("Connected:", balance_msg["balance"])
+    log(f"CONNECTED account_balance={balance_msg["balance"]}")
     return client
 
 def get_available_symbols(client):
@@ -205,10 +217,7 @@ def signal(prices):
     return None, fast, slow, momentum
 
 def main():
-    print(
-        f"DERIV DEMO BOT | symbols={SYMBOL} | stake={STAKE} | "
-        f"duration={DURATION}s | DRY_RUN={DRY_RUN}"
-    )
+    log(f"DERIV DEMO BOT | symbols={SYMBOL} | stake={STAKE} | duration={DURATION}s | DRY_RUN={DRY_RUN}")
 
     account_id = get_demo_account_id()
     client = None
@@ -317,10 +326,7 @@ def main():
             if not action:
                 continue
 
-            print(
-                f"SIGNAL {symbol} {action} EMA9={fast:.6f} "
-                f"EMA21={slow:.6f} RSI14={momentum:.2f}"
-            )
+            log(f"SIGNAL {symbol} {action} EMA9={fast:.6f} EMA21={slow:.6f} RSI14={momentum:.2f}")
 
             rid = client.send({
                 "proposal": 1,
@@ -338,10 +344,7 @@ def main():
                 print(f"PROPOSAL FAILED {symbol} {action}: {exc}")
                 continue
 
-            print(
-                f"PROPOSAL {symbol} {action} ask={proposal['ask_price']} "
-                f"payout={proposal.get('payout')}"
-            )
+            log(f"PROPOSAL {symbol} {action} id={proposal.get("id")} ask={proposal["ask_price"]} payout={proposal.get("payout")}")
             last_trade = time.time()
 
             if DRY_RUN:
@@ -363,7 +366,7 @@ def main():
             buy_time = time.time()
             buy_price = float(bought.get("buy_price", proposal.get("ask_price", STAKE)) or STAKE)
             trades += 1
-            print(f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: {symbol} {action} contract={contract_id}")
+            log(f"DEMO TRADE PURCHASED {trades}/{MAX_TRADES}: {symbol} {action} contract={contract_id} buy_price={buy_price} account={account_id}")
 
             client.send({
                 "proposal_open_contract": 1,
@@ -388,7 +391,13 @@ def main():
                 if c.get("is_sold"):
                     pnl = float(c.get("profit", 0) or 0)
                     day_pnl += pnl
-                    print(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f}")
+                    log(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f} contract={contract_id}")
+                    try:
+                        srid = client.send({"statement": 1, "description": 1, "limit": 20, "action_type": "sell"})
+                        stmt = client.recv_for(srid, "statement", timeout=10).get("statement", {})
+                        log(f"STATEMENT_AFTER_CLOSE account={account_id} entries={len(stmt.get("transactions", [])) if isinstance(stmt, dict) else 0}")
+                    except Exception as exc:
+                        log(f"STATEMENT CHECK FAILED after close: {exc}")
                     break
 
                 elapsed = time.time() - buy_time
@@ -401,12 +410,18 @@ def main():
                         sold_for = float(sold.get("sold_for", buy_price) or buy_price)
                         pnl = sold_for - buy_price
                         day_pnl += pnl
-                        print(f"EARLY CLOSED {symbol} pnl={pnl:.2f} sold_for={sold_for:.2f} day_pnl={day_pnl:.2f}")
+                        log(f"EARLY CLOSED {symbol} pnl={pnl:.2f} sold_for={sold_for:.2f} day_pnl={day_pnl:.2f} contract={contract_id}")
+                        try:
+                            srid = client.send({"statement": 1, "description": 1, "limit": 20, "action_type": "sell"})
+                            stmt = client.recv_for(srid, "statement", timeout=10).get("statement", {})
+                            log(f"STATEMENT_AFTER_EARLY_CLOSE account={account_id} entries={len(stmt.get("transactions", [])) if isinstance(stmt, dict) else 0}")
+                        except Exception as exc:
+                            log(f"STATEMENT CHECK FAILED after early close: {exc}")
                     except Exception as exc:
                         print(f"EARLY SELL FAILED: {exc}. Waiting for normal expiry.")
                     break
 
-        print(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
+        log(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
     finally:
         if client:
             client.close()
