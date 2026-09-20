@@ -1,54 +1,43 @@
-name: Deriv Live Balance Check
+name: Deriv Live Connection Check
 
 on:
   workflow_dispatch:
 
 jobs:
-  balance:
+  connection:
     runs-on: ubuntu-latest
     steps:
-      - name: Diagnose live account access (balance only)
+      - name: Verify LIVE token access without trading
         env:
           LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
         run: |
           set -u
-          if [ -z "${LIVE_DERIV_TOKEN:-}" ]; then echo "DIAGNOSIS: LIVE_DERIV_TOKEN is empty"; exit 1; fi
-          if [ -z "${DERIV_APP_ID:-}" ]; then echo "DIAGNOSIS: DERIV_APP_ID is empty"; exit 1; fi
+          if [ -z "${LIVE_DERIV_TOKEN:-}" ]; then
+            echo "CONNECTION_CHECK: LIVE_DERIV_TOKEN is empty"
+            exit 1
+          fi
+          if [ -z "${DERIV_APP_ID:-}" ]; then
+            echo "CONNECTION_CHECK: DERIV_APP_ID is empty"
+            exit 1
+          fi
 
-          echo "DIAGNOSIS: LIVE Options account check only. No buy/sell request is sent."
+          echo "CONNECTION_CHECK: verifying LIVE API authentication only."
+          echo "NO balance request. NO buy. NO sell."
+
           tmp=$(mktemp)
           code=$(curl -sS -o "$tmp" -w "%{http_code}"             -H "Authorization: Bearer $LIVE_DERIV_TOKEN"             -H "Deriv-App-ID: $DERIV_APP_ID"             -H "Accept: application/json"             "https://api.derivws.com/trading/v1/options/accounts")
 
           echo "HTTP_STATUS=$code"
-          python - "$tmp" <<'PY'
-          import json, sys
-          raw = open(sys.argv[1], encoding="utf-8").read()
-          try:
-              body = json.loads(raw)
-          except Exception:
-              print("DERIV_RESPONSE_NOT_JSON")
-              print(raw[:2000])
-              raise SystemExit(1)
 
-          errors = body.get("errors")
-          if errors:
-              for e in errors:
-                  print("DERIV_ERROR_CODE:", e.get("code"))
-                  print("DERIV_ERROR_MESSAGE:", e.get("message"))
-                  print("DERIV_ERROR_STATUS:", e.get("status"))
-              raise SystemExit(1)
+          if [ "$code" = "200" ]; then
+            echo "CONNECTION_CHECK: LIVE API authentication accepted."
+            echo "CONNECTION_CHECK: request completed without any trading operation."
+            exit 0
+          fi
 
-          data = body.get("data", [])
-          accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
-          real = [a for a in accounts if str(a.get("account_type","")).lower() == "real"]
-          active = [a for a in real if str(a.get("status","")).lower() == "active"]
-          if not active:
-              print("No active REAL Options account returned.")
-              raise SystemExit(1)
-
-          for a in active:
-              print(f"REAL OPTIONS ACCOUNT: {a.get('account_id')} | BALANCE: {a.get('balance')} {a.get('currency','')}")
-          print("CHECK COMPLETE: no trade request was sent.")
-          PY
+          echo "CONNECTION_CHECK: LIVE API authentication/access was rejected."
+          echo "Deriv response:"
+          cat "$tmp"
           rm -f "$tmp"
+          exit 1
