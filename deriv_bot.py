@@ -407,6 +407,7 @@ def main():
                 "subscribe": 1,
             })
 
+            profitable_hold_logged = False
             while True:
                 try:
                     update = client.recv_json(timeout=30)
@@ -430,7 +431,18 @@ def main():
                 elapsed = time.time() - buy_time
                 if elapsed >= CLOSE_AFTER_SECONDS:
                     profit = float(c.get("profit", 0) or 0)
-                    print("CLOSE TIMER: {:.2f}s reached; selling Accumulator now (profit={:+.2f}).".format(elapsed, profit))
+
+                    # After the minimum hold time, keep a trade that is showing profit.
+                    # Close only when it is no longer profitable.
+                    if profit > 0:
+                        if not profitable_hold_logged:
+                            log("PROFIT HOLD {} profit={:+.2f} after {:.2f}s | keeping contract open.".format(
+                                symbol, profit, elapsed))
+                            profitable_hold_logged = True
+                        continue
+
+                    print("CLOSE TIMER: {:.2f}s reached; profit={:+.2f}; selling Accumulator.".format(
+                        elapsed, profit))
                     sell_rid = client.send({"sell": contract_id, "price": 0})
                     try:
                         sold = client.recv_for(sell_rid, "sell", timeout=10)["sell"]
@@ -439,9 +451,12 @@ def main():
                         day_pnl += pnl
                         log("ACCU CLOSED AFTER {:.2f}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(
                             elapsed, symbol, pnl, sold_for, day_pnl, contract_id))
+                        break
                     except Exception as exc:
-                        print("ACCU SELL FAILED: {}. Waiting for contract to close normally.".format(exc))
-                    break
+                        print("ACCU SELL FAILED: {}. Waiting for a later tick before retrying.".format(exc))
+                        # Keep monitoring the same contract; do not start another
+                        # trade while this contract is still open.
+                        continue
 
         log(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
     finally:
