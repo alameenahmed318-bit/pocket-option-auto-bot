@@ -196,7 +196,7 @@ def signal(prices):
         return False, fast, slow, momentum, vol
     spot = float(prices[-1])
     spread = abs(fast-slow)/spot if spot else 999.0
-    return spread <= 0.003 and 35 <= momentum <= 65 and vol <= 0.0008, fast, slow, momentum, vol
+    return spread <= 0.006 and 25 <= momentum <= 75 and vol <= 0.0015, fast, slow, momentum, vol
 
 def main():
     log(f"DERIV ACCUMULATOR DEMO BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | profit_target=${PROFIT_TARGET_USD:.2f} | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
