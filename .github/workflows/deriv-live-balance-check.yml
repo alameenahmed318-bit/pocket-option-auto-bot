@@ -1,0 +1,40 @@
+name: Deriv Live Balance Check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  balance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check live Options account balance only
+        env:
+          LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
+          DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LIVE_DERIV_TOKEN:-}" ] || [ -z "${DERIV_APP_ID:-}" ]; then
+            echo "Missing LIVE_DERIV_TOKEN or DERIV_APP_ID secret."
+            exit 1
+          fi
+
+          echo "Checking LIVE Options accounts. No trade/buy/sell request will be sent."
+          response=$(curl -fsS \
+            -H "Authorization: Bearer $LIVE_DERIV_TOKEN" \
+            -H "Deriv-App-ID: $DERIV_APP_ID" \
+            -H "Accept: application/json" \
+            "https://api.derivws.com/trading/v1/options/accounts")
+
+          python - <<'PY' "$response"
+          import json, sys
+          body = json.loads(sys.argv[1])
+          data = body.get("data", [])
+          accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
+          real = [a for a in accounts if str(a.get("account_type","")).lower() == "real"]
+          active = [a for a in real if str(a.get("status","")).lower() == "active"]
+          if not active:
+              raise SystemExit("No active REAL Options account returned for this token.")
+          for a in active:
+              print(f"REAL OPTIONS ACCOUNT: {a.get('account_id')} | BALANCE: {a.get('balance')} {a.get('currency','')}")
+          print("CHECK COMPLETE: no trade request was sent.")
+          PY
