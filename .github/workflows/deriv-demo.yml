@@ -27,10 +27,11 @@ jobs:
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
           DERIV_SYMBOL: "AUTO"
           STAKE_USD: "1"
-          ACCU_GROWTH_RATE: "0.02"
-          CLOSE_AFTER_SECONDS: "0.75"
+          ACCU_GROWTH_RATE: "0.05"
+          CLOSE_AFTER_SECONDS: "0.5"
           MAX_TRADES: "0"
-          COOLDOWN_SECONDS: "3"
+          COOLDOWN_SECONDS: "1"
+          STABLE_MARKETS_LIMIT: "5"
           MAX_DAILY_LOSS_USD: "50"
         run: python -u deriv_bot.py
       - name: Upload Deriv trade log
