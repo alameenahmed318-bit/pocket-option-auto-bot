@@ -1,109 +1,36 @@
-name: Deriv Live Preflight (NO TRADING)
+name: Deriv MT5 Real Forex Preflight (NO TRADING)
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: deriv-live-preflight
+  group: deriv-mt5-real-preflight
   cancel-in-progress: false
 
 jobs:
   preflight:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - name: Check real Options account and WebSocket readiness
-        env:
-          LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
-          DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MetaTrader5 Python package
+        run: python -m pip install --upgrade pip MetaTrader5
+
+      - name: Install MetaTrader 5 terminal
+        shell: powershell
         run: |
-          set -euo pipefail
+          $installer = "$env:TEMP\mt5setup.exe"
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "/auto" -Wait
 
-          echo "DERIV LIVE PREFLIGHT — NO BUY / NO SELL / NO ORDER / NO TRADE"
-
-          test -n "$LIVE_DERIV_TOKEN" || { echo "FAIL: LIVE_DERIV_TOKEN is missing"; exit 1; }
-          test -n "$DERIV_APP_ID" || { echo "FAIL: DERIV_APP_ID is missing"; exit 1; }
-
-          python3 - <<'PY'
-          import json, os, sys, urllib.request, urllib.error
-
-          token = os.environ["LIVE_DERIV_TOKEN"]
-          app_id = os.environ["DERIV_APP_ID"]
-          base = "https://api.derivws.com"
-          headers = {
-              "Authorization": f"Bearer {token}",
-              "Deriv-App-ID": app_id,
-              "Accept": "application/json",
-              "Content-Type": "application/json",
-          }
-
-          req = urllib.request.Request(
-              base + "/trading/v1/options/accounts",
-              headers=headers,
-              method="GET",
-          )
-
-          try:
-              with urllib.request.urlopen(req, timeout=20) as r:
-                  body = json.load(r)
-                  print("ACCOUNT_HTTP_STATUS=", r.status)
-          except urllib.error.HTTPError as e:
-              print("ACCOUNT_HTTP_STATUS=", e.code)
-              print("FAIL: account lookup rejected by Deriv")
-              sys.exit(1)
-
-          data = body.get("data", [])
-          accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
-          real = [a for a in accounts if str(a.get("account_type", "")).lower() == "real"]
-
-          print("ACCOUNTS_RETURNED=", len(accounts))
-          print("REAL_ACCOUNTS_FOUND=", len(real))
-          print("DEMO_ACCOUNTS_FOUND=", sum(1 for a in accounts if str(a.get("account_type", "")).lower() == "demo"))
-
-          if not real:
-              print("FAIL: Deriv API still returns no REAL Options account for this token.")
-              print("NO TRADE WAS ATTEMPTED.")
-              sys.exit(2)
-
-          active_real = [a for a in real if str(a.get("status", "")).lower() == "active"]
-          if not active_real:
-              print("FAIL: REAL Options account exists but none is active.")
-              print("NO TRADE WAS ATTEMPTED.")
-              sys.exit(3)
-
-          account = active_real[0]
-          account_id = str(account.get("account_id", "")).strip()
-          if not account_id:
-              print("FAIL: active REAL account has no account_id.")
-              sys.exit(4)
-
-          print("REAL_ACCOUNT_STATUS=active")
-          print("REAL_ACCOUNT_CURRENCY=", account.get("currency", ""))
-          print("REAL_ACCOUNT_BALANCE_PRESENT=", account.get("balance") is not None)
-
-          otp_req = urllib.request.Request(
-              f"{base}/trading/v1/options/accounts/{account_id}/otp",
-              headers=headers,
-              method="POST",
-          )
-
-          try:
-              with urllib.request.urlopen(otp_req, timeout=20) as r:
-                  otp_body = json.load(r)
-                  print("OTP_HTTP_STATUS=", r.status)
-          except urllib.error.HTTPError as e:
-              print("OTP_HTTP_STATUS=", e.code)
-              print("FAIL: Deriv could not issue a real-account WebSocket OTP.")
-              print("NO TRADE WAS ATTEMPTED.")
-              sys.exit(5)
-
-          ws_url = str(otp_body.get("data", {}).get("url", ""))
-          if "/options/ws/real" not in ws_url:
-              print("FAIL: OTP did not return the REAL Options WebSocket endpoint.")
-              print("NO TRADE WAS ATTEMPTED.")
-              sys.exit(6)
-
-          print("REAL_WEBSOCKET_READY=true")
-          print("PREFLIGHT=PASS")
-          print("NO BUY / NO SELL / NO ORDER / NO TRADE WAS PERFORMED.")
-          PY
+      - name: REAL MT5 Forex preflight
+        env:
+          MT5_REAL_LOGIN: ${{ secrets.MT5_REAL_LOGIN }}
+          MT5_REAL_PASSWORD: ${{ secrets.MT5_REAL_PASSWORD }}
+          MT5_REAL_SERVER: ${{ secrets.MT5_REAL_SERVER }}
+        run: python -u mt5_preflight.py
