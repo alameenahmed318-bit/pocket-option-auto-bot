@@ -7,7 +7,7 @@ jobs:
   balance:
     runs-on: ubuntu-latest
     steps:
-      - name: Read LIVE balance only
+      - name: Read ALL LIVE account balances only
         env:
           LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
@@ -22,7 +22,7 @@ jobs:
             exit 1
           fi
 
-          echo "BALANCE_CHECK: reading LIVE account balance only."
+          echo "BALANCE_CHECK: reading ALL accounts linked to this token."
           echo "NO buy. NO sell. NO order. NO trade."
 
           tmp=$(mktemp)
@@ -39,6 +39,7 @@ jobs:
 
           python3 - "$tmp" <<'PY'
           import json, sys
+
           with open(sys.argv[1], "r", encoding="utf-8") as f:
               payload = json.load(f)
 
@@ -46,16 +47,43 @@ jobs:
           if isinstance(accounts, dict):
               accounts = [accounts]
 
-          real = [a for a in accounts if str(a.get("account_type", "")).lower() == "real"]
+          print(f"ACCOUNTS_RETURNED: {len(accounts)}")
 
-          if not real:
-              print("BALANCE_CHECK: No REAL Options account returned.")
+          if not accounts:
+              print("BALANCE_CHECK: No accounts returned for this token.")
               sys.exit(1)
 
-          for a in real:
-              print(f"LIVE_BALANCE: {a.get('balance')} {a.get('currency', '')}".strip())
-              print(f"ACCOUNT_STATUS: {a.get('status', 'unknown')}")
+          real = []
+          for a in accounts:
+              account_type = str(a.get("account_type", "unknown")).lower()
+              account_id = a.get("account_id", "unknown")
+              balance = a.get("balance", "unknown")
+              currency = a.get("currency", "")
+              status = a.get("status", "unknown")
+              group = a.get("group", "unknown")
+
+              print(
+                  f"ACCOUNT: id={account_id} type={account_type} "
+                  f"balance={balance} {currency} status={status} group={group}"
+              )
+
+              if account_type == "real":
+                  real.append(a)
+
+          print(f"REAL_ACCOUNTS_FOUND: {len(real)}")
+
+          if real:
+              for a in real:
+                  print(
+                      f"LIVE_BALANCE: account_id={a.get('account_id', 'unknown')} "
+                      f"balance={a.get('balance', 'unknown')} "
+                      f"{a.get('currency', '')} "
+                      f"status={a.get('status', 'unknown')}"
+                  )
+          else:
+              print("BALANCE_CHECK: No REAL account was returned for this token.")
+
+          print("BALANCE_CHECK: completed. No trading operation was performed.")
           PY
 
           rm -f "$tmp"
-          echo "BALANCE_CHECK: completed. No trading operation was performed."
