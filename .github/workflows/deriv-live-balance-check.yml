@@ -1,58 +1,61 @@
-name: Deriv Live Connection Check
+name: Deriv Live Balance Check
 
 on:
   workflow_dispatch:
 
 jobs:
-  connection:
+  balance:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify LIVE token access without trading
+      - name: Read LIVE balance only
         env:
           LIVE_DERIV_TOKEN: ${{ secrets.LIVE_DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
         run: |
           set -u
           if [ -z "${LIVE_DERIV_TOKEN:-}" ]; then
-            echo "CONNECTION_CHECK: LIVE_DERIV_TOKEN is empty"
+            echo "BALANCE_CHECK: LIVE_DERIV_TOKEN is empty"
             exit 1
           fi
           if [ -z "${DERIV_APP_ID:-}" ]; then
-            echo "CONNECTION_CHECK: DERIV_APP_ID is empty"
+            echo "BALANCE_CHECK: DERIV_APP_ID is empty"
             exit 1
           fi
 
-          echo "CONNECTION_CHECK: verifying LIVE API authentication only."
-          echo "NO balance request. NO buy. NO sell."
+          echo "BALANCE_CHECK: reading LIVE account balance only."
+          echo "NO buy. NO sell. NO order. NO trade."
 
           tmp=$(mktemp)
           code=$(curl -sS -o "$tmp" -w "%{http_code}"             -H "Authorization: Bearer $LIVE_DERIV_TOKEN"             -H "Deriv-App-ID: $DERIV_APP_ID"             -H "Accept: application/json"             "https://api.derivws.com/trading/v1/options/accounts")
 
           echo "HTTP_STATUS=$code"
 
-          if [ "$code" = "200" ]; then
-            echo "CONNECTION_CHECK: LIVE API request accepted."
-            echo "CONNECTION_CHECK: no trading operation was performed."
+          if [ "$code" != "200" ]; then
+            echo "BALANCE_CHECK: LIVE account read failed."
+            cat "$tmp"
             rm -f "$tmp"
-            exit 0
+            exit 1
           fi
 
-          response=$(cat "$tmp")
-          if [ "$code" = "403" ] && echo "$response" | grep -qi "Insufficient scopes"; then
-            echo "CONNECTION_CHECK: LIVE token was recognized by Deriv."
-            echo "CONNECTION_CHECK: token is missing the scope required by this account endpoint."
-            echo "CONNECTION_CHECK: this is NOT a token-format/authentication failure."
-            echo "CONNECTION_CHECK: NO buy. NO sell."
-            rm -f "$tmp"
-            exit 0
-          fi
+          python3 - "$tmp" <<'PY'
+          import json, sys
+          with open(sys.argv[1], "r", encoding="utf-8") as f:
+              payload = json.load(f)
 
-          if [ "$code" = "401" ]; then
-            echo "CONNECTION_CHECK: LIVE token was rejected as invalid or unauthorised."
-          else
-            echo "CONNECTION_CHECK: LIVE API access was rejected."
-          fi
-          echo "Deriv response:"
-          echo "$response"
+          accounts = payload.get("data", [])
+          if isinstance(accounts, dict):
+              accounts = [accounts]
+
+          real = [a for a in accounts if str(a.get("account_type", "")).lower() == "real"]
+
+          if not real:
+              print("BALANCE_CHECK: No REAL Options account returned.")
+              sys.exit(1)
+
+          for a in real:
+              print(f"LIVE_BALANCE: {a.get('balance')} {a.get('currency', '')}".strip())
+              print(f"ACCOUNT_STATUS: {a.get('status', 'unknown')}")
+          PY
+
           rm -f "$tmp"
-          exit 1
+          echo "BALANCE_CHECK: completed. No trading operation was performed."
