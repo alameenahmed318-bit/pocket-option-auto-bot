@@ -11,12 +11,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run WebSocket paper trader
+
+      - name: Run Demo-data paper trader
         env:
           PO_SSID: ${{ secrets.PO_SSID }}
           DEMO_ONLY: "true"
