@@ -4,30 +4,28 @@ import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [PO-DEMO] %(levelname)s %(message)s",
+    format="%(asctime)s [PO-MONITOR] %(levelname)s %(message)s",
 )
 
-# Safety: this build is permanently paper/demo-data only.
-DEMO_ONLY = os.getenv("DEMO_ONLY", "true").lower() == "true"
-if not DEMO_ONLY:
-    raise RuntimeError("Safety lock: DEMO_ONLY must remain true.")
+# This build is intentionally non-executing: it never sends broker orders.
+DEMO_ONLY = True
 
 ASSET = os.getenv("ASSET", "EURUSD_otc")
-PERIOD = int(os.getenv("PERIOD", "300"))          # M5
-EXPIRATION = int(os.getenv("EXPIRATION", "60"))   # simulated seconds
-STAKE = float(os.getenv("STAKE", "1"))
-MAX_TRADES = int(os.getenv("MAX_TRADES_PER_RUN", "5"))
+PERIOD = int(os.getenv("PERIOD", "60"))
+SCAN_SECONDS = float(os.getenv("SCAN_SECONDS", "5"))
+MAX_RUNTIME_SECONDS = int(os.getenv("MAX_RUNTIME_SECONDS", "540"))
 
 
 def closes_from(candles):
     out = []
-    for c in candles or []:
+    for candle in candles or []:
         try:
-            out.append(float(c.get("close")))
+            out.append(float(candle.get("close")))
         except (TypeError, ValueError, AttributeError):
-            pass
+            continue
     return out
 
 
@@ -35,10 +33,10 @@ def ema(values, n):
     if not values:
         return 0.0
     k = 2 / (n + 1)
-    e = values[0]
-    for v in values[1:]:
-        e = v * k + e * (1 - k)
-    return e
+    value = values[0]
+    for item in values[1:]:
+        value = item * k + value * (1 - k)
+    return value
 
 
 def rsi(values, n=14):
@@ -46,9 +44,9 @@ def rsi(values, n=14):
         return 50.0
     gains = losses = 0.0
     for a, b in zip(values[-n - 1:-1], values[-n:]):
-        d = b - a
-        gains += max(d, 0)
-        losses += max(-d, 0)
+        delta = b - a
+        gains += max(delta, 0.0)
+        losses += max(-delta, 0.0)
     if losses == 0:
         return 100.0
     avg_gain = gains / n
@@ -67,12 +65,6 @@ def signal(values):
     if fast < slow and values[-1] < values[-2] and 28 <= rr <= 48:
         return "PUT"
     return None
-
-
-def simulated_result(direction, entry, expiry_price):
-    if direction == "CALL":
-        return "WIN" if expiry_price > entry else "LOSS" if expiry_price < entry else "DRAW"
-    return "WIN" if expiry_price < entry else "LOSS" if expiry_price > entry else "DRAW"
 
 
 def main():
@@ -97,76 +89,61 @@ def main():
         raise RuntimeError("WebSocket did not become ready.")
 
     logging.info(
-        "CONNECTED | DEMO DATA / PAPER ONLY | asset=%s | M5 | simulated_expiry=%ss",
-        ASSET, EXPIRATION
+        "CONNECTED | LIVE MARKET MONITOR | asset=%s | period=%ss | scan=%ss",
+        ASSET,
+        PERIOD,
+        SCAN_SECONDS,
     )
+
     api.subscribe(ASSET, period=PERIOD)
 
     balance = api.get_balance()
     payout = api.get_payout(ASSET)
     logging.info("ACCOUNT | balance=%s | payout=%s%%", balance, payout)
 
-    wins = losses = draws = signals = 0
+    started = time.time()
+    last_signal = None
 
-    for n in range(1, MAX_TRADES + 1):
-        # Current market snapshot used for the signal.
-        candles = api.get_historical_candles(
-            ASSET, period=PERIOD, offset=9000, count_request=80
-        )
-        closes = closes_from(candles)
+    try:
+        while time.time() - started < MAX_RUNTIME_SECONDS:
+            candles = api.get_historical_candles(
+                ASSET,
+                period=PERIOD,
+                offset=0,
+                count_request=80,
+            )
+            closes = closes_from(candles)
 
-        if len(closes) < 30:
-            logging.warning("WAIT | insufficient candles=%d", len(closes))
-            time.sleep(5)
-            continue
+            if len(closes) < 30:
+                logging.info("WAIT | insufficient candles=%d", len(closes))
+                time.sleep(SCAN_SECONDS)
+                continue
 
-        direction = signal(closes)
-        entry = closes[-1]
-        logging.info(
-            "SIGNAL %d/%d | %s | entry=%.6f",
-            n, MAX_TRADES, direction or "NONE", entry
-        )
+            direction = signal(closes)
+            entry = closes[-1]
 
-        if not direction:
-            time.sleep(2)
-            continue
+            if direction != last_signal:
+                logging.info(
+                    "SIGNAL_CHANGE | signal=%s | price=%.6f | rsi=%.2f",
+                    direction or "NONE",
+                    entry,
+                    rsi(closes),
+                )
+                last_signal = direction
 
-        signals += 1
+            if direction:
+                # Execution is deliberately blocked in this build.
+                logging.info(
+                    "TRADE_READY | direction=%s | entry=%.6f | EXECUTION_BLOCKED",
+                    direction,
+                    entry,
+                )
 
-        # We do NOT call buy() or any order endpoint.
-        # For the paper result, use the latest available candle after the
-        # simulated expiry window. This is an approximate backtest-style
-        # outcome, not a broker settlement.
-        future = api.get_historical_candles(
-            ASSET, period=PERIOD, offset=9000 - max(1, EXPIRATION // PERIOD),
-            count_request=80
-        )
-        future_closes = closes_from(future)
-        expiry_price = future_closes[-1] if future_closes else entry
+            time.sleep(SCAN_SECONDS)
 
-        result = simulated_result(direction, entry, expiry_price)
-        if result == "WIN":
-            wins += 1
-        elif result == "LOSS":
-            losses += 1
-        else:
-            draws += 1
-
-        logging.info(
-            "PAPER_RESULT | direction=%s | entry=%.6f | expiry=%.6f | result=%s | stake=%.2f | NO_ORDER_SENT",
-            direction, entry, expiry_price, result, STAKE
-        )
-        time.sleep(2)
-
-    total = wins + losses + draws
-    win_rate = (wins / (wins + losses) * 100) if (wins + losses) else 0.0
-
-    logging.info(
-        "RUN COMPLETE | signals=%d | wins=%d | losses=%d | draws=%d | win_rate=%.1f%% | NO REAL/DEMO ORDER EXECUTED",
-        signals, wins, losses, draws, win_rate
-    )
-
-    api.disconnect_websocket()
+    finally:
+        api.disconnect_websocket()
+        logging.info("STOPPED | market monitor disconnected")
 
 
 if __name__ == "__main__":
