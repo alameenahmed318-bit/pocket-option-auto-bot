@@ -16,9 +16,9 @@ jobs:
         shell: powershell
         run: |
           $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
-          $installer = "$env:TEMPmt5setup.exe"
+          $installer = Join-Path $env:TEMP 'mt5setup.exe'
           Invoke-WebRequest -Uri $url -OutFile $installer
-          $installDir = "$env:RUNNER_TEMPMT5"
+          $installDir = Join-Path $env:RUNNER_TEMP 'MT5'
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           Start-Process $installer -ArgumentList '/auto',('/path:' + $installDir) -Wait
           $terminal = Get-ChildItem $installDir -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
