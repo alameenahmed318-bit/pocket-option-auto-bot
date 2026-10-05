@@ -14,20 +14,26 @@ def stop(x): log("ERROR | "+x); raise SystemExit(1)
 if not PASSWORD: stop("MT5_PASSWORD secret is missing.")
 if not MT5_PATH: stop("MT5_PATH environment variable is missing.")
 if not os.path.exists(MT5_PATH): stop(f"MT5 terminal not found: {MT5_PATH}")
-# GitHub Actions/Windows can take longer than the MT5 process startup before its IPC endpoint is ready.
-# Retry the same terminal connection instead of failing on the first IPC timeout.
+# Own the terminal lifecycle from Python so GitHub Actions does not leave a
+# separately-started terminal with an IPC endpoint that the API cannot use.
 mt5_ok=False
-for attempt in range(1,9):
-    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=30000):
+for attempt in range(1,7):
+    try: mt5.shutdown()
+    except Exception: pass
+    if os.name == "nt":
+        os.system("taskkill /F /IM terminal64.exe >NUL 2>&1")
+        time.sleep(3)
+    log(f"MT5 initialize attempt {attempt}/6")
+    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=120000,portable=True):
         mt5_ok=True
         break
     err=mt5.last_error()
-    log(f"MT5 initialize retry {attempt}/8 | err={err}")
+    log(f"MT5 initialize failed {attempt}/6 | err={err}")
     try: mt5.shutdown()
     except Exception: pass
-    time.sleep(10)
+    time.sleep(15)
 if not mt5_ok:
-    stop(f"MT5 initialize failed after retries: {mt5.last_error()}")
+    stop(f"MT5 initialize failed after 6 attempts: {mt5.last_error()}")
 a=mt5.account_info()
 if a is None: stop(f"account_info failed: {mt5.last_error()}")
 log(f"CONNECTED | login={a.login} | server={a.server} | balance={a.balance:.2f} | equity={a.equity:.2f} | currency={a.currency}")
