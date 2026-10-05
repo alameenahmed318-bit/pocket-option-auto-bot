@@ -12,18 +12,27 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+
       - name: Install MetaTrader 5
         shell: powershell
         run: |
           $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
-          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\mt5setup.exe"
-          Start-Process "$env:TEMP\mt5setup.exe" -ArgumentList '/auto',('/path:' + $env:RUNNER_TEMP + '\MT5') -Wait
-          if (-not (Get-ChildItem "$env:RUNNER_TEMP\MT5" -Recurse -Filter 'terminal64.exe' | Select-Object -First 1)) { throw 'MT5 terminal was not installed' }
+          $installer = "$env:TEMP\mt5setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $installDir = "$env:RUNNER_TEMP\MT5"
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Start-Process $installer -ArgumentList '/auto',('/path:' + $installDir) -Wait
+          $terminal = Get-ChildItem $installDir -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
+          if (-not $terminal) { throw 'MT5 terminal was not installed' }
+          "MT5_PATH=$($terminal.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements-deriv.txt
+
       - name: Run Deriv MT5 Gold bot
         env:
           MT5_LOGIN: "32432112"
@@ -40,10 +49,11 @@ jobs:
           MAX_POSITIONS: "1"
         shell: powershell
         run: |
-          $terminal = Get-ChildItem "$env:RUNNER_TEMP\MT5" -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
-          & $terminal.FullName /portable
-          Start-Sleep -Seconds 5
+          if (-not $env:MT5_PATH) { throw 'MT5_PATH is missing' }
+          Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable'
+          Start-Sleep -Seconds 15
           python -u deriv_bot.py
+
       - name: Upload MT5 Gold trade log
         if: always()
         uses: actions/upload-artifact@v4
