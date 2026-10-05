@@ -1,328 +1,66 @@
 #!/usr/bin/env python3
-import json, os, time
-from datetime import datetime, timezone
-from collections import deque
-import requests
-import websocket
-
-API_BASE = "https://api.derivws.com"
-TRADING_MODE = os.getenv("TRADING_MODE", "DEMO").strip().upper()
-if TRADING_MODE not in {"DEMO", "LIVE"}:
-    raise SystemExit("TRADING_MODE must be DEMO or LIVE.")
-DEMO_ONLY = TRADING_MODE == "DEMO"
-TOKEN = os.getenv("LIVE_DERIV_TOKEN" if TRADING_MODE == "LIVE" else "DERIV_TOKEN", "").strip()
-APP_ID = os.getenv("DERIV_APP_ID", "").strip()
-ACCOUNT_ID_OVERRIDE = os.getenv("DERIV_ACCOUNT_ID", "").strip()
-SYMBOL = os.getenv("DERIV_SYMBOL", "AUTO").strip()
-STAKE = float(os.getenv("STAKE_USD", "1"))
-DURATION = int(os.getenv("DURATION_SECONDS", "60"))
-MAX_TRADES = int(os.getenv("MAX_TRADES", "100"))
-COOLDOWN = float(os.getenv("COOLDOWN_SECONDS", "30"))
-MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS_USD", "15"))
-DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-ACCU_GROWTH_RATE = float(os.getenv("ACCU_GROWTH_RATE", "0.03"))
-CLOSE_AFTER_SECONDS = float(os.getenv("CLOSE_AFTER_SECONDS", "2"))
-PROFIT_TARGET_USD = float(os.getenv("PROFIT_TARGET_USD", "0.02"))
-STABLE_MARKETS_LIMIT = int(os.getenv("STABLE_MARKETS_LIMIT", "5"))
-LOG_FILE = os.getenv("DERIV_LOG_FILE", "deriv_trades.log")
-
-def log(message):
-    line = f"[{datetime.now(timezone.utc).isoformat()}] {message}"
-    print(line, flush=True)
-    try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
-
-if not TOKEN or not APP_ID:
-    raise SystemExit(f"Missing {'LIVE_DERIV_TOKEN' if TRADING_MODE == 'LIVE' else 'DERIV_TOKEN'} or DERIV_APP_ID.")
-
-def auth_headers():
-    return {"Authorization": f"Bearer {TOKEN}", "Deriv-App-ID": APP_ID,
-            "Content-Type": "application/json", "Accept": "application/json"}
-
-def get_account_id():
-    url = f"{API_BASE}/trading/v1/options/accounts"
-    last_exc = None
-    r = None
-    for attempt in range(1, 6):
-        try:
-            r = requests.get(url, headers=auth_headers(), timeout=20)
-            if r.ok or r.status_code not in (429, 500, 502, 503, 504):
-                break
-            log(f"ACCOUNT LOOKUP HTTP {r.status_code}; retry {attempt}/5")
-        except requests.RequestException as exc:
-            last_exc = exc
-            log(f"ACCOUNT LOOKUP NETWORK ERROR attempt {attempt}/5: {exc}")
-        if attempt < 5:
-            time.sleep(min(2 ** (attempt - 1), 10))
-    if r is None:
-        raise RuntimeError(f"Deriv account lookup failed after 5 attempts: {last_exc}")
-    if r.ok:
-        body = r.json()
-        data = body.get("data", [])
-        accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
-        target_type = "real" if TRADING_MODE == "LIVE" else "demo"
-        demos = [a for a in accounts if str(a.get("account_type", "")).lower() == target_type]
-        if ACCOUNT_ID_OVERRIDE:
-            matches = [a for a in demos if str(a.get("account_id", "")).strip() == ACCOUNT_ID_OVERRIDE]
-            if not matches:
-                raise RuntimeError(f"DERIV_ACCOUNT_ID was not found among this token's {target_type} Options accounts.")
-            account = matches[0]
-            if str(account.get("status", "")).lower() != "active":
-                raise RuntimeError(f"DERIV_ACCOUNT_ID={ACCOUNT_ID_OVERRIDE} is not active.")
-            log(f"Using FIXED {TRADING_MODE} Options account: {ACCOUNT_ID_OVERRIDE} | balance={account.get('balance')} {account.get('currency', '')}")
-            return ACCOUNT_ID_OVERRIDE
-        if demos:
-            active = [a for a in demos if str(a.get("status", "")).lower() == "active"]
-            account = active[0] if active else demos[0]
-            account_id = str(account.get("account_id", "")).strip()
-            if account_id:
-                log(f"Using {TRADING_MODE} Options account: {account_id} | balance={account.get('balance')} {account.get('currency', '')}")
-                return account_id
-        visible_types = sorted({str(a.get("account_type", "")).lower() for a in accounts if isinstance(a, dict)})
-        if TRADING_MODE == "LIVE":
-            raise RuntimeError(
-                f"LIVE account not available to this token. Deriv returned account types={visible_types}; "
-                "no Real Options account was returned. No trade was placed."
-            )
-        raise RuntimeError(f"No active Demo Options account was returned: {body}")
-    if r.status_code == 404:
-        if TRADING_MODE == "LIVE":
-            raise RuntimeError("No existing real Options account was returned for this LIVE token. No account will be created automatically in LIVE mode.")
-        create = requests.post(url, headers=auth_headers(),
-                                json={"currency": "USD", "group": "row", "account_type": "demo"},
-                                timeout=20)
-        if not create.ok:
-            if create.status_code == 403 and "scope" in create.text.lower():
-                raise RuntimeError("Deriv token is missing the account_manage scope. Create a PAT with the required account scope, then update the appropriate GitHub secret.")
-            raise RuntimeError(f"Deriv Options account creation failed with HTTP {create.status_code}: {create.text}")
-        body = create.json()
-        data = body.get("data", [])
-        accounts = [data] if isinstance(data, dict) else data if isinstance(data, list) else []
-        demos = [a for a in accounts if str(a.get("account_type", "")).lower() == "demo"]
-        if not demos:
-            raise RuntimeError(f"No {TRADING_MODE} Options account was returned: {body}")
-        account_id = str(demos[0].get("account_id", "")).strip()
-        if not account_id:
-            raise RuntimeError(f"Demo account response has no account_id: {demos[0]}")
-        log(f"Using {TRADING_MODE} Options account: {account_id} | balance={demos[0].get('balance')} {demos[0].get('currency', '')}")
-        return account_id
-    if r.status_code == 403 and "scope" in r.text.lower():
-        raise RuntimeError("Deriv token is missing the trade scope. Create a PAT with the trade scope and update the appropriate GitHub secret.")
-    raise RuntimeError(f"Deriv Demo Options account lookup failed with HTTP {r.status_code}: {r.text}")
-
-def get_ws_url(account_id):
-    r = requests.post(f"{API_BASE}/trading/v1/options/accounts/{account_id}/otp",
-                      headers=auth_headers(), timeout=20)
-    if not r.ok:
-        raise RuntimeError(f"Deriv OTP request failed with HTTP {r.status_code}: {r.text}")
-    url = r.json().get("data", {}).get("url")
-    if not url:
-        raise RuntimeError(f"No WebSocket URL returned: {r.text}")
-    return url
-
-class Client:
-    def __init__(self, url):
-        self.ws = websocket.create_connection(url, timeout=30, enable_multithread=True)
-        self.req_id = 0
-    def send(self, payload):
-        self.req_id += 1
-        payload = dict(payload, req_id=self.req_id)
-        self.ws.send(json.dumps(payload))
-        return self.req_id
-    def recv_json(self, timeout=30):
-        self.ws.settimeout(timeout)
-        try:
-            return json.loads(self.ws.recv())
-        except websocket.WebSocketTimeoutException:
-            return None
-        except websocket.WebSocketConnectionClosedException:
-            raise ConnectionError("WebSocket connection to Deriv was closed.")
-    def recv_for(self, req_id, msg_type=None, timeout=30):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            msg = self.recv_json(timeout=max(1, deadline - time.time()))
-            if msg is None:
-                continue
-            if msg.get("error"):
-                raise RuntimeError(msg["error"].get("message", str(msg["error"])))
-            if msg.get("req_id") == req_id and (msg_type is None or msg.get("msg_type") == msg_type):
-                return msg
-        raise TimeoutError(f"Timed out waiting for req_id={req_id}")
-    def close(self):
-        try: self.ws.close()
-        except Exception: pass
-
-def connect(account_id):
-    client = Client(get_ws_url(account_id))
-    rid = client.send({"balance": 1})
-    balance_msg = client.recv_for(rid, "balance")
-    log(f"CONNECTED account_balance={balance_msg['balance']}")
-    return client
-
-def get_available_symbols(client):
-    rid = client.send({"active_symbols": "brief", "contract_type": ["ACCU"]})
-    msg = client.recv_for(rid, "active_symbols", timeout=30)
-    names = []
-    for item in msg.get("active_symbols", []):
-        symbol = item.get("underlying_symbol") or item.get("symbol")
-        if not symbol or item.get("is_trading_suspended") == 1 or item.get("exchange_is_open") == 0:
-            continue
-        names.append(symbol)
-    if SYMBOL and SYMBOL.upper() != "AUTO":
-        names = [s for s in names if s == SYMBOL]
-    names = list(dict.fromkeys(names))
-    print(f"OPEN ACCUMULATOR SYMBOLS ({len(names)}): {', '.join(names[:80])}")
-    return names
-
-def ema(values, n):
-    if len(values) < n: return None
-    k = 2 / (n + 1)
-    value = sum(values[:n]) / n
-    for p in values[n:]: value = p * k + value * (1 - k)
-    return value
-
-def rsi(values, n=14):
-    if len(values) < n + 1: return None
-    gains, losses = [], []
-    for a, b in zip(values[-n-1:-1], values[-n:]):
-        d = b - a
-        gains.append(max(d, 0)); losses.append(max(-d, 0))
-    ag, al = sum(gains) / n, sum(losses) / n
-    return 100.0 if al == 0 else 100 - (100 / (1 + ag / al))
-
-def stability_score(prices):
-    if len(prices) < 40: return None
-    base = prices[-1] or 1.0
-    returns = [(b-a)/base for a,b in zip(prices[-30:-1], prices[-29:])]
-    return sum(abs(x) for x in returns) / len(returns)
-
-def signal(prices):
-    fast, slow = ema(prices, 9), ema(prices, 21)
-    momentum, vol = rsi(prices, 14), stability_score(prices)
-    if fast is None or slow is None or momentum is None or vol is None or not prices:
-        return False, fast, slow, momentum, vol
-    spot = float(prices[-1])
-    spread = abs(fast-slow)/spot if spot else 999.0
-    return spread <= 0.006 and 25 <= momentum <= 75 and vol <= 0.0015, fast, slow, momentum, vol
-
-def main():
-    log(f"DERIV ACCUMULATOR {TRADING_MODE} BOT | symbols={SYMBOL} | stake={STAKE} | growth={ACCU_GROWTH_RATE:.2%} | close_after={CLOSE_AFTER_SECONDS}s | profit_target=${PROFIT_TARGET_USD:.2f} | cooldown={COOLDOWN}s | stable_top={STABLE_MARKETS_LIMIT} | DRY_RUN={DRY_RUN}")
-    account_id = get_account_id()
-    client = None
-    trades = 0
-    day_pnl = 0.0
-    last_trade = 0.0
-    try:
-        for attempt in range(1,4):
-            try:
-                client = connect(account_id); break
-            except (ConnectionError, websocket.WebSocketException) as exc:
-                print(f"Connection attempt {attempt}/3 failed: {exc}")
-                if client: client.close()
-                if attempt < 3: time.sleep(5)
-        else: raise RuntimeError("Could not establish a stable Deriv WebSocket connection.")
-        symbols = get_available_symbols(client)
-        if not symbols:
-            print("NO OPEN ACCUMULATOR SYMBOLS: nothing to trade right now."); return
-        histories = {s: deque(maxlen=120) for s in symbols}
-        for symbol in symbols:
-            try: client.send({"ticks": symbol, "subscribe": 1})
-            except Exception as exc: print(f"Could not subscribe to {symbol}: {exc}")
-        print(f"SUBSCRIBED TO {len(symbols)} SYMBOLS. Scanning all available markets.")
-        warmup_deadline = time.time()+120
-        while time.time() < warmup_deadline and any(len(v)<40 for v in histories.values()):
-            try: msg = client.recv_json(timeout=30)
-            except ConnectionError:
-                print("WebSocket closed during market scan; reconnecting...")
-                client.close(); client=connect(account_id); symbols=get_available_symbols(client)
-                histories={s:deque(maxlen=120) for s in symbols}
-                for s in symbols: client.send({"ticks":s,"subscribe":1})
-                continue
-            if not msg or msg.get("msg_type") != "tick": continue
-            tick=msg.get("tick",{}); symbol=tick.get("symbol"); quote=tick.get("quote")
-            if symbol in histories and quote is not None: histories[symbol].append(float(quote))
-            ready_now=[s for s,h in histories.items() if len(h)>=40]
-            if ready_now: print(f"READY {symbol} ({len(histories[symbol])} ticks) | ACTIVE READY MARKETS={len(ready_now)}")
-        ready=[s for s,h in histories.items() if len(h)>=40]
-        print(f"READY SYMBOLS ({len(ready)}): {', '.join(ready[:80])}")
-        if not ready:
-            print("BOT STOPPED: no active symbol supplied enough live ticks. No contract was purchased."); return
-        ranked=sorted(ready,key=lambda s: stability_score(list(histories[s])) if stability_score(list(histories[s])) is not None else 999.0)
-        selected=ranked[:max(1,min(STABLE_MARKETS_LIMIT,len(ranked)))]
-        log(f"STABLE MARKET SELECTION: {', '.join(selected)} | selected_by_lowest_recent_tick_volatility")
-        while (MAX_TRADES<=0 or trades<MAX_TRADES) and day_pnl>-MAX_DAILY_LOSS:
-            try: msg=client.recv_json(timeout=30)
-            except ConnectionError:
-                print("WebSocket closed. Reconnecting to continue {TRADING_MODE} test...")
-                client.close(); client=connect(account_id); symbols=get_available_symbols(client)
-                histories={s:deque(maxlen=120) for s in symbols}
-                for s in symbols: client.send({"ticks":s,"subscribe":1})
-                continue
-            if not msg or msg.get("msg_type")!="tick": continue
-            tick=msg.get("tick",{}); symbol=tick.get("symbol"); quote=tick.get("quote")
-            if symbol not in histories or quote is None: continue
-            histories[symbol].append(float(quote))
-            if symbol not in selected or time.time()-last_trade<COOLDOWN: continue
-            stable,fast,slow,momentum,vol=signal(list(histories[symbol]))
-            if not stable: continue
-            log("ACCU SIGNAL {} growth={:.2%} EMA9={:.6f} EMA21={:.6f} RSI14={:.2f} tick_vol={:.6f}".format(symbol,ACCU_GROWTH_RATE,fast,slow,momentum,vol))
-            rid=client.send({"proposal":1,"amount":STAKE,"basis":"stake","contract_type":"ACCU","currency":"USD","underlying_symbol":symbol,"growth_rate":ACCU_GROWTH_RATE})
-            try: proposal=client.recv_for(rid,"proposal",timeout=15)["proposal"]
-            except Exception as exc: print(f"ACCU PROPOSAL FAILED {symbol}: {exc}"); continue
-            log("ACCU PROPOSAL {} growth={:.2%} id={} ask={} payout={}".format(symbol,ACCU_GROWTH_RATE,proposal.get("id"),proposal["ask_price"],proposal.get("payout")))
-            last_trade=time.time()
-            if DRY_RUN:
-                trades+=1; print(f"DRY_RUN=true: Accumulator proposal only; simulated test {trades}/{MAX_TRADES}."); continue
-            rid=client.send({"buy":proposal["id"],"price":float(proposal["ask_price"])})
-            try: bought=client.recv_for(rid,"buy",timeout=15)["buy"]
-            except Exception as exc: print(f"ACCU BUY FAILED {symbol}: {exc}"); continue
-            contract_id=bought["contract_id"]; buy_time=time.time()
-            buy_price=float(bought.get("buy_price",proposal.get("ask_price",STAKE)) or STAKE)
-            trades+=1
-            log("{TRADING_MODE} ACCUMULATOR PURCHASED {}/{}: {} growth={:.2%} contract={} buy_price={} account={}".format(trades,MAX_TRADES,symbol,ACCU_GROWTH_RATE,contract_id,buy_price,account_id))
-            client.send({"proposal_open_contract":1,"contract_id":contract_id,"subscribe":1})
-            while True:
-                try: update=client.recv_json(timeout=30)
-                except ConnectionError:
-                    print("WebSocket closed while monitoring contract. Reconnecting...")
-                    client.close(); client=connect(account_id); continue
-                if not update or update.get("msg_type")!="proposal_open_contract": continue
-                c=update.get("proposal_open_contract",{})
-                if str(c.get("contract_id"))!=str(contract_id): continue
-                if c.get("is_sold"):
-                    pnl=float(c.get("profit",0) or 0); day_pnl+=pnl
-                    log(f"CLOSED {symbol} pnl={pnl:.2f} day_pnl={day_pnl:.2f} contract={contract_id}"); break
-                elapsed=time.time()-buy_time
-                profit=float(c.get("profit",0) or 0)
-                if profit>=PROFIT_TARGET_USD:
-                    print("PROFIT TARGET: +${:.2f} reached at {:.2f}s; selling Accumulator now.".format(profit,elapsed))
-                    sell_rid=client.send({"sell":contract_id,"price":0})
-                    try:
-                        sold=client.recv_for(sell_rid,"sell",timeout=10)["sell"]
-                        sold_for=float(sold.get("sold_for",buy_price) or buy_price)
-                        pnl=sold_for-buy_price; day_pnl+=pnl
-                        log("ACCU CLOSED AT PROFIT TARGET {:.2f}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(elapsed,symbol,pnl,sold_for,day_pnl,contract_id))
-                        break
-                    except Exception as exc:
-                        print("ACCU PROFIT SELL FAILED: {}. Waiting for a later tick before retrying.".format(exc))
-                        continue
-                if elapsed>=CLOSE_AFTER_SECONDS:
-                    print("CLOSE TIMER: {:.2f}s reached; profit={:+.2f}; selling Accumulator.".format(elapsed,profit))
-                    sell_rid=client.send({"sell":contract_id,"price":0})
-                    try:
-                        sold=client.recv_for(sell_rid,"sell",timeout=10)["sell"]
-                        sold_for=float(sold.get("sold_for",buy_price) or buy_price)
-                        pnl=sold_for-buy_price; day_pnl+=pnl
-                        log("ACCU CLOSED AFTER {:.2f}s {} pnl={:.2f} sold_for={:.2f} day_pnl={:.2f} contract={}".format(elapsed,symbol,pnl,sold_for,day_pnl,contract_id))
-                        break
-                    except Exception as exc:
-                        print("ACCU SELL FAILED: {}. Waiting for a later tick before retrying.".format(exc))
-                        continue
-        log(f"BOT STOPPED trades={trades} day_pnl={day_pnl:.2f} | risk_limit={MAX_DAILY_LOSS:.2f}")
-    finally:
-        if client: client.close()
-
-if __name__=="__main__": main()
+import os,time,math
+from datetime import datetime,timezone
+import MetaTrader5 as mt5
+import pandas as pd
+LOGIN=int(os.getenv("MT5_LOGIN","32432112")); SERVER=os.getenv("MT5_SERVER","Deriv-Demo"); PASSWORD=os.getenv("MT5_PASSWORD","")
+LOT=float(os.getenv("LOT","0.10")); SCAN=float(os.getenv("SCAN_SECONDS","2")); TARGET=float(os.getenv("PROFIT_TARGET","0.10")); MAXLOSS=float(os.getenv("MAX_LOSS","10"))
+TRAIL=float(os.getenv("TRAIL_START","0.10")); GIVEBACK=float(os.getenv("TRAIL_GIVEBACK","0.05")); COOLDOWN=float(os.getenv("COOLDOWN_SECONDS","3")); MAXPOS=int(os.getenv("MAX_POSITIONS","1")); DRY=os.getenv("DRY_RUN","false").lower()=="true"; MAGIC=int(os.getenv("MT5_MAGIC","32432112"))
+LOG="deriv_mt5_gold.log"
+def log(x):
+ s=f"[{datetime.now(timezone.utc).isoformat()}] {x}"; print(s,flush=True)
+ with open(LOG,"a",encoding="utf-8") as f:f.write(s+"\n")
+def stop(x): log("ERROR | "+x); raise SystemExit(1)
+if not PASSWORD: stop("MT5_PASSWORD secret is missing.")
+if not mt5.initialize(login=LOGIN,password=PASSWORD,server=SERVER,timeout=60000): stop(f"MT5 initialize failed: {mt5.last_error()}")
+a=mt5.account_info()
+if a is None: stop(f"account_info failed: {mt5.last_error()}")
+log(f"CONNECTED | login={a.login} | server={a.server} | balance={a.balance:.2f} | equity={a.equity:.2f} | currency={a.currency}")
+if int(a.login)!=LOGIN: stop(f"Wrong login returned: {a.login}")
+ss=mt5.symbols_get() or []
+cand=[s.name for s in ss if "XAU" in s.name.upper() or "GOLD" in s.name.upper()]
+if not cand: stop("No XAU/GOLD symbol found on Deriv-Demo.")
+symbol=sorted(set(cand),key=lambda x:(0 if x.upper()=="XAUUSD" else 1,len(x)))[0]
+if not mt5.symbol_select(symbol,True): stop(f"Cannot select {symbol}: {mt5.last_error()}")
+si=mt5.symbol_info(symbol); step=float(si.volume_step or .01); lot=max(float(si.volume_min or step),min(float(si.volume_max or LOT),LOT)); lot=round(math.floor(lot/step+1e-9)*step,8)
+log(f"GOLD SYMBOL | {symbol} | lot={lot} | digits={si.digits} | min={si.volume_min} | step={si.volume_step}")
+def data():
+ r=mt5.copy_rates_from_pos(symbol,mt5.TIMEFRAME_M1,0,150)
+ if r is None or len(r)<60:return None
+ d=pd.DataFrame(r); d["e9"]=d.close.ewm(span=9,adjust=False).mean(); d["e21"]=d.close.ewm(span=21,adjust=False).mean()
+ ch=d.close.diff(); g=ch.clip(lower=0).ewm(alpha=1/14,adjust=False).mean(); l=(-ch.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean(); d["rsi"]=100-(100/(1+g/l.replace(0,float("nan")))); return d
+def sig(d):
+ a,b=d.iloc[-2],d.iloc[-3]
+ if any(pd.isna(a[x]) for x in ("e9","e21","rsi")):return None
+ if b.e9<=b.e21<a.e9 and a.close>a.open and 52<=a.rsi<=75:return "BUY"
+ if b.e9>=b.e21>a.e9 and a.close<a.open and 25<=a.rsi<=48:return "SELL"
+ return None
+def positions():return list(mt5.positions_get(symbol=symbol) or [])
+def close(p):
+ t=mt5.symbol_info_tick(symbol)
+ if t is None:return False
+ typ=mt5.ORDER_TYPE_SELL if p.type==mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY; price=t.bid if p.type==mt5.POSITION_TYPE_BUY else t.ask
+ if DRY:log(f"DRY_RUN CLOSE | ticket={p.ticket} | profit={p.profit:.2f}");return True
+ r=mt5.order_send({"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":p.volume,"type":typ,"position":p.ticket,"price":price,"deviation":30,"magic":MAGIC,"comment":"GOLD_PROTECT","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC})
+ ok=r and r.retcode==mt5.TRADE_RETCODE_DONE; log(f"CLOSED | ticket={p.ticket} | profit={p.profit:.2f}" if ok else f"CLOSE_FAILED | ticket={p.ticket} | err={mt5.last_error()}"); return bool(ok)
+def open_trade(side):
+ t=mt5.symbol_info_tick(symbol)
+ if t is None:return False
+ typ=mt5.ORDER_TYPE_BUY if side=="BUY" else mt5.ORDER_TYPE_SELL; price=t.ask if side=="BUY" else t.bid
+ if DRY:log(f"DRY_RUN OPEN | {side} | {symbol} | lot={lot} | price={price}");return True
+ r=mt5.order_send({"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":lot,"type":typ,"price":price,"deviation":30,"magic":MAGIC,"comment":"DERIV_GOLD_FAST","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC})
+ ok=r and r.retcode==mt5.TRADE_RETCODE_DONE; log(f"OPENED | {side} | {symbol} | lot={lot}" if ok else f"ORDER_REJECTED | side={side} | retcode={None if r is None else r.retcode} | comment={None if r is None else r.comment}"); return bool(ok)
+peak={};lastbar=None;lasttrade=0
+log(f"GOLD BOT READY | M1 | scan={SCAN}s | lot={lot} | target={TARGET} | max_loss={MAXLOSS} | trail={TRAIL} | giveback={GIVEBACK} | dry_run={DRY}")
+while True:
+ d=data()
+ if d is None:time.sleep(SCAN);continue
+ for p in positions():
+  peak[p.ticket]=max(peak.get(p.ticket,p.profit),p.profit)
+  if p.profit>=TARGET or p.profit<=-MAXLOSS or (peak[p.ticket]>=TRAIL and p.profit<=peak[p.ticket]-GIVEBACK):close(p);peak.pop(p.ticket,None)
+ if len(positions())<MAXPOS and time.time()-lasttrade>=COOLDOWN:
+  bt=int(d.iloc[-2].time)
+  if bt!=lastbar:
+   lastbar=bt;side=sig(d)
+   if side and open_trade(side):lasttrade=time.time()
+ time.sleep(SCAN)
