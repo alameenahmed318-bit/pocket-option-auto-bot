@@ -3,7 +3,7 @@ import os,time,math
 from datetime import datetime,timezone
 import MetaTrader5 as mt5
 import pandas as pd
-LOGIN=int(os.getenv("MT5_LOGIN","32432112")); SERVER=os.getenv("MT5_SERVER","Deriv-Demo"); PASSWORD=os.getenv("MT5_PASSWORD","")
+LOGIN=int(os.getenv("MT5_LOGIN","32432112")); SERVER=os.getenv("MT5_SERVER","Deriv-Demo"); PASSWORD=os.getenv("MT5_PASSWORD",""); MT5_PATH=os.getenv("MT5_PATH","")
 LOT=float(os.getenv("LOT","0.10")); SCAN=float(os.getenv("SCAN_SECONDS","2")); TARGET=float(os.getenv("PROFIT_TARGET","0.10")); MAXLOSS=float(os.getenv("MAX_LOSS","10"))
 TRAIL=float(os.getenv("TRAIL_START","0.10")); GIVEBACK=float(os.getenv("TRAIL_GIVEBACK","0.05")); COOLDOWN=float(os.getenv("COOLDOWN_SECONDS","3")); MAXPOS=int(os.getenv("MAX_POSITIONS","1")); DRY=os.getenv("DRY_RUN","false").lower()=="true"; MAGIC=int(os.getenv("MT5_MAGIC","32432112"))
 LOG="deriv_mt5_gold.log"
@@ -12,7 +12,9 @@ def log(x):
  with open(LOG,"a",encoding="utf-8") as f:f.write(s+"\n")
 def stop(x): log("ERROR | "+x); raise SystemExit(1)
 if not PASSWORD: stop("MT5_PASSWORD secret is missing.")
-if not mt5.initialize(login=LOGIN,password=PASSWORD,server=SERVER,timeout=60000): stop(f"MT5 initialize failed: {mt5.last_error()}")
+if not MT5_PATH: stop("MT5_PATH environment variable is missing.")
+if not os.path.exists(MT5_PATH): stop(f"MT5 terminal not found: {MT5_PATH}")
+if not mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=60000): stop(f"MT5 initialize failed: {mt5.last_error()}")
 a=mt5.account_info()
 if a is None: stop(f"account_info failed: {mt5.last_error()}")
 log(f"CONNECTED | login={a.login} | server={a.server} | balance={a.balance:.2f} | equity={a.equity:.2f} | currency={a.currency}")
@@ -42,14 +44,14 @@ def close(p):
  typ=mt5.ORDER_TYPE_SELL if p.type==mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_BUY; price=t.bid if p.type==mt5.POSITION_TYPE_BUY else t.ask
  if DRY:log(f"DRY_RUN CLOSE | ticket={p.ticket} | profit={p.profit:.2f}");return True
  r=mt5.order_send({"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":p.volume,"type":typ,"position":p.ticket,"price":price,"deviation":30,"magic":MAGIC,"comment":"GOLD_PROTECT","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC})
- ok=r and r.retcode==mt5.TRADE_RETCODE_DONE; log(f"CLOSED | ticket={p.ticket} | profit={p.profit:.2f}" if ok else f"CLOSE_FAILED | ticket={p.ticket} | err={mt5.last_error()}"); return bool(ok)
+ ok=r and r.retcode==mt5.TRADE_RETCODE_DONE; log(f"CLOSED | ticket={p.ticket} | profit={p.profit:.2f}" if ok else f"CLOSE_FAILED | ticket={p.ticket} | retcode={None if r is None else r.retcode} | comment={None if r is None else r.comment} | err={mt5.last_error()}"); return bool(ok)
 def open_trade(side):
  t=mt5.symbol_info_tick(symbol)
  if t is None:return False
  typ=mt5.ORDER_TYPE_BUY if side=="BUY" else mt5.ORDER_TYPE_SELL; price=t.ask if side=="BUY" else t.bid
  if DRY:log(f"DRY_RUN OPEN | {side} | {symbol} | lot={lot} | price={price}");return True
  r=mt5.order_send({"action":mt5.TRADE_ACTION_DEAL,"symbol":symbol,"volume":lot,"type":typ,"price":price,"deviation":30,"magic":MAGIC,"comment":"DERIV_GOLD_FAST","type_time":mt5.ORDER_TIME_GTC,"type_filling":mt5.ORDER_FILLING_IOC})
- ok=r and r.retcode==mt5.TRADE_RETCODE_DONE; log(f"OPENED | {side} | {symbol} | lot={lot}" if ok else f"ORDER_REJECTED | side={side} | retcode={None if r is None else r.retcode} | comment={None if r is None else r.comment}"); return bool(ok)
+ ok=r and r.retcode==mt5.TRADE_RETCODE_DONE; log(f"OPENED | {side} | {symbol} | lot={lot}" if ok else f"ORDER_REJECTED | side={side} | retcode={None if r is None else r.retcode} | comment={None if r is None else r.comment} | err={mt5.last_error()}"); return bool(ok)
 peak={};lastbar=None;lasttrade=0
 log(f"GOLD BOT READY | M1 | scan={SCAN}s | lot={lot} | target={TARGET} | max_loss={MAXLOSS} | trail={TRAIL} | giveback={GIVEBACK} | dry_run={DRY}")
 while True:
