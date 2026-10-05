@@ -24,7 +24,7 @@ for attempt in range(1,7):
         os.system("taskkill /F /IM terminal64.exe >NUL 2>&1")
         time.sleep(3)
     log(f"MT5 initialize attempt {attempt}/6")
-    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=120000,portable=True):
+    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=180000):
         mt5_ok=True
         break
     err=mt5.last_error()
