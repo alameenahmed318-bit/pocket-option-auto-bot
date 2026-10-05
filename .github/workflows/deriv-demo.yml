@@ -16,38 +16,33 @@ jobs:
         shell: powershell
         run: |
           $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
-          $installer = "$env:TEMP\mt5setup.exe"
+          $installer = "$env:TEMPmt5setup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
-          $installDir = "$env:RUNNER_TEMP\MT5"
+          $installDir = "$env:RUNNER_TEMPMT5"
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           Start-Process $installer -ArgumentList '/auto',('/path:' + $installDir) -Wait
           $terminal = Get-ChildItem $installDir -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
           if (-not $terminal) { throw 'MT5 terminal was not installed' }
           "MT5_PATH=$($terminal.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+          Write-Host "MT5 terminal: $($terminal.FullName)"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip && pip install -r requirements-deriv.txt
-      - name: Run Deriv MT5 Gold bot
+      - name: Start MT5 and connect account
         env:
           MT5_LOGIN: "32432112"
           MT5_SERVER: "Deriv-Demo"
           MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
-          DRY_RUN: "false"
-          LOT: "0.10"
-          SCAN_SECONDS: "2"
-          PROFIT_TARGET: "0.10"
-          MAX_LOSS: "10.0"
-          TRAIL_START: "0.10"
-          TRAIL_GIVEBACK: "0.05"
-          COOLDOWN_SECONDS: "3"
-          MAX_POSITIONS: "1"
         shell: powershell
         run: |
           if (-not $env:MT5_PATH) { throw 'MT5_PATH is missing' }
-          Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable'
-          Start-Sleep -Seconds 15
+          $dir = Split-Path $env:MT5_PATH -Parent
+          $p = Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable' -WorkingDirectory $dir -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) { throw "MT5 exited immediately. ExitCode=$($p.ExitCode)" }
+          Write-Host "MT5 process running: PID=$($p.Id)"
           python -u deriv_bot.py
       - name: Upload MT5 Gold trade log
         if: always()
