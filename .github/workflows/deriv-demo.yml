@@ -27,6 +27,7 @@ jobs:
           DRY_RUN: "false"
           DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
           DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
+          DERIV_ACCOUNT_ID: ${{ secrets.DERIV_ACCOUNT_ID }}
           DERIV_SYMBOL: "R_75"
           STAKE_USD: "1"
           ACCU_GROWTH_RATE: "0.03"
