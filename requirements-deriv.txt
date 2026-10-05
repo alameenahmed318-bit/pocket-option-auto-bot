@@ -1,2 +1,2 @@
-requests>=2.32,<3
-websocket-client>=1.8,<2
+MetaTrader5>=5.0.45
+pandas>=2.2,<3
