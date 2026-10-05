@@ -1,57 +1,53 @@
-name: Deriv Demo Bot
-
+name: Deriv MT5 Gold Bot
 on:
   workflow_dispatch:
-  # Keep one long-lived runner alive. GitHub-hosted jobs have a hard 6-hour limit,
-  # so the next scheduled run takes over after this run reaches its limit.
   schedule:
     - cron: "7 */6 * * *"
-
 concurrency:
   group: deriv-demo-bot
   cancel-in-progress: false
-
 jobs:
   demo:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+      - name: Install MetaTrader 5
+        shell: powershell
+        run: |
+          $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\mt5setup.exe"
+          Start-Process "$env:TEMP\mt5setup.exe" -ArgumentList '/auto',('/path:' + $env:RUNNER_TEMP + '\MT5') -Wait
+          if (-not (Get-ChildItem "$env:RUNNER_TEMP\MT5" -Recurse -Filter 'terminal64.exe' | Select-Object -First 1)) { throw 'MT5 terminal was not installed' }
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-deriv.txt
-      - name: Run Deriv demo bot with automatic crash recovery
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements-deriv.txt
+      - name: Run Deriv MT5 Gold bot
         env:
-          DEMO_ONLY: "true"
+          MT5_LOGIN: "32432112"
+          MT5_SERVER: "Deriv-Demo"
+          MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
           DRY_RUN: "false"
-          DERIV_TOKEN: ${{ secrets.DERIV_TOKEN }}
-          DERIV_APP_ID: ${{ secrets.DERIV_APP_ID }}
-          DERIV_ACCOUNT_ID: ${{ secrets.DERIV_ACCOUNT_ID }}
-          DERIV_SYMBOL: "R_75"
-          STAKE_USD: "1"
-          ACCU_GROWTH_RATE: "0.03"
-          CLOSE_AFTER_SECONDS: "2"
-          PROFIT_TARGET_USD: "0.02"
-          MAX_TRADES: "0"
-          COOLDOWN_SECONDS: "2"
-          STABLE_MARKETS_LIMIT: "1"
-          MAX_DAILY_LOSS_USD: "50"
+          LOT: "0.10"
+          SCAN_SECONDS: "2"
+          PROFIT_TARGET: "0.10"
+          MAX_LOSS: "10.0"
+          TRAIL_START: "0.10"
+          TRAIL_GIVEBACK: "0.05"
+          COOLDOWN_SECONDS: "3"
+          MAX_POSITIONS: "1"
+        shell: powershell
         run: |
-          set +e
-          restart_count=0
-          while true; do
-            restart_count=$((restart_count + 1))
-            echo "=== DERIV BOT SUPERVISOR START #$restart_count ==="
-            python -u deriv_bot.py
-            rc=$?
-            echo "=== DERIV BOT EXITED rc=$rc; automatic restart in 5s ==="
-            sleep 5
-          done
-      - name: Upload Deriv trade log
+          $terminal = Get-ChildItem "$env:RUNNER_TEMP\MT5" -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
+          & $terminal.FullName /portable
+          Start-Sleep -Seconds 5
+          python -u deriv_bot.py
+      - name: Upload MT5 Gold trade log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: deriv-trade-log-${{ github.run_id }}
-          path: deriv_trades.log
+          name: deriv-mt5-gold-log-${{ github.run_id }}
+          path: deriv_mt5_gold.log
           if-no-files-found: warn
