@@ -41,7 +41,23 @@ jobs:
           Write-Host "MetaEditor: $($meta.FullName)"
           Write-Host "Source: $src"
           & $meta.FullName /portable /compile:$src /log
-          Start-Sleep -Seconds 2
+          Start-Sleep -Seconds 3
+
+          Write-Host "=== MetaEditor compile diagnostics ==="
+          $sourceLog = Join-Path $experts 'GoldFastEA.log'
+          $editorLog = Join-Path $env:MT5_DIR 'logs\metaeditor.log'
+          if (Test-Path $sourceLog) {
+            Write-Host "--- GoldFastEA.log ---"
+            Get-Content $sourceLog -Raw
+          } else {
+            Write-Host "GoldFastEA.log not found at $sourceLog"
+          }
+          if (Test-Path $editorLog) {
+            Write-Host "--- metaeditor.log ---"
+            Get-Content $editorLog -Raw
+          } else {
+            Write-Host "metaeditor.log not found at $editorLog"
+          }
 
           $built = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'GoldFastEA.ex5' | Select-Object -First 1
           if (-not $built) {
