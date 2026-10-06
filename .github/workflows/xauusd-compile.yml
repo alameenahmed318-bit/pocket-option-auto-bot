@@ -1,0 +1,38 @@
+name: Compile XAUUSD Fast Scalper
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'mql5/Experts/XAUUSD_FastScalper.mq5'
+      - '.github/workflows/xauusd-compile.yml'
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare MQL5 folders
+        run: |
+          mkdir -p mql5/Experts mql5/Include
+
+      - name: Compile MQ5 to EX5
+        run: |
+          docker run --rm             -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts"             -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro"             hudsonventura/mt5:2.2 /build.sh
+
+      - name: Verify EX5
+        run: |
+          find mql5/Experts -type f -name '*.ex5' -print
+          test -f mql5/Experts/XAUUSD_FastScalper.ex5
+
+      - name: Upload EX5
+        uses: actions/upload-artifact@v4
+        with:
+          name: XAUUSD_FastScalper_EX5
+          path: mql5/Experts/XAUUSD_FastScalper.ex5
+          if-no-files-found: error
