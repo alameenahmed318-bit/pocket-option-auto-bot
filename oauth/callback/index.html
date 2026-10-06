@@ -1,7 +1,10 @@
 <!doctype html>
-<html lang="en"><meta charset="utf-8"><title>GoldBot2026 — OAuth Callback</title>
+<html lang="en">
+<meta charset="utf-8">
+<title>GoldBot2026 - Deriv Callback</title>
 <body style="font-family:system-ui;max-width:760px;margin:40px auto;padding:20px">
-<h2>Deriv connection</h2><pre id="out">Completing connection…</pre>
+<h2>Deriv connection</h2>
+<pre id="out">Checking response...</pre>
 <script>
 const out=document.getElementById("out");
 (async()=>{
@@ -10,49 +13,35 @@ const out=document.getElementById("out");
   const code=q.get("code");
   const state=q.get("state");
   const error=q.get("error");
-  const description=q.get("error_description");
+  const description=q.get("error_description")||"";
   const savedState=sessionStorage.getItem("deriv_oauth_state");
   const verifier=sessionStorage.getItem("deriv_code_verifier");
 
   if(error){
-    out.textContent =
-      "DERIV OAUTH ERROR\\n\\n"+
-      "error: "+error+"\\n"+
-      "error_description: "+(description || "(empty)")+"\\n"+
-      "state returned: "+(state ? "yes" : "no")+"\\n"+
-      "state matches: "+(state && savedState ? String(state===savedState) : "unknown")+
-      "\\n\\nNo authorization code was issued by Deriv.\\n"+
-      "Return to Connect Deriv and try again.";
-    return;
+   out.textContent="DERIV OAUTH ERROR\n\n"+
+    "error: "+error+"\n"+
+    "error_description: "+(description||"(empty)")+"\n"+
+    "state returned: "+(state?"yes":"no")+"\n"+
+    "state matches: "+(state&&savedState?String(state===savedState):"unknown")+
+    "\n\nDeriv did not issue an authorization code.";
+   return;
   }
 
   if(!code) throw new Error("Deriv returned neither an authorization code nor an OAuth error.");
-  if(!state || state!==savedState) throw new Error("OAuth state mismatch.");
-  if(!verifier) throw new Error("PKCE verifier missing. Start again from the Connect Deriv page.");
+  if(!state||state!==savedState) throw new Error("OAuth state mismatch.");
+  if(!verifier) throw new Error("PKCE verifier missing. Start again.");
 
-  out.textContent="Authorization code received. Completing connection…";
-
-  const CLIENT_ID="34B9I7nOjWmQkh09P5LHx";
-  const REDIRECT_URI="https://alameenahmed318-bit.github.io/pocket-option-auto-bot/oauth/callback";
-  const r=await fetch("https://auth.deriv.com/oauth2/token",{
-    method:"POST",
-    headers:{"Content-Type":"application/x-www-form-urlencoded"},
-    body:new URLSearchParams({
-      grant_type:"authorization_code",
-      client_id:CLIENT_ID,
-      code,
-      redirect_uri:REDIRECT_URI,
-      code_verifier:verifier
-    })
-  });
-  const d=await r.json();
-  if(!r.ok) throw new Error("Token exchange failed: "+JSON.stringify(d));
+  out.textContent="AUTHORIZATION RECEIVED\n\n"+
+   "OAuth authorization succeeded.\n\n"+
+   "A secure server must complete the next step.\n"+
+   "This page does not process credentials.";
 
   sessionStorage.removeItem("deriv_oauth_state");
   sessionStorage.removeItem("deriv_code_verifier");
-  out.textContent="CONNECTED\\n\\nOAuth authorization succeeded.\\nToken received securely by this page.\\n\\nExpires in: "+(d.expires_in??"unknown")+" seconds.";
  }catch(e){
-  out.textContent="CONNECTION ERROR\\n\\n"+e.message;
+  out.textContent="CONNECTION ERROR\n\n"+e.message;
  }
 })();
-</script></body></html>
+</script>
+</body>
+</html>
