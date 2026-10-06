@@ -18,7 +18,7 @@ jobs:
 
       - name: Prepare
         run: |
-          mkdir -p mql5/Experts mql5/Include
+          mkdir -p mql5/Experts
           echo "=== SOURCE ==="
           ls -lah mql5/Experts
           wc -l mql5/Experts/XAUUSD_FastScalper.mq5
@@ -28,7 +28,6 @@ jobs:
           docker pull hudsonventura/mt5:2.2
           docker run --rm \
             -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts" \
-            -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro" \
             hudsonventura/mt5:2.2 /build.sh
 
       - name: Diagnose compiler output
@@ -38,7 +37,7 @@ jobs:
           find mql5/Experts -maxdepth 2 -type f -printf '%p %s bytes\n' || true
           echo "=== COMPILER LOG ==="
           if [ -f mql5/Experts/.log ]; then
-            cat mql5/Experts/.log
+            iconv -f UTF-16LE -t UTF-8 mql5/Experts/.log || cat mql5/Experts/.log
           else
             echo "No .log file found"
           fi
