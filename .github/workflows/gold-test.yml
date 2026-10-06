@@ -1,28 +1,228 @@
-name: Gold EA Test
+name: Deriv Gold EA
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  gold:
     runs-on: windows-latest
     timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Check Gold EA
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MetaTrader 5
         shell: powershell
         run: |
-          Write-Host "GoldFastEA source found:"
-          Get-Item "$env:GITHUB_WORKSPACE\GoldFastEA.mq5" | Format-List FullName,Length
+          $url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
+          $installer = Join-Path $env:TEMP "mt5setup.exe"
+          $mt5dir = Join-Path $env:RUNNER_TEMP "MT5"
 
-          $text = Get-Content "$env:GITHUB_WORKSPACE\GoldFastEA.mq5" -Raw
-          if ($text -notmatch 'GOLD EA READY') {
-            throw "GoldFastEA.mq5 does not contain the expected GOLD EA code."
+          Invoke-WebRequest -Uri $url -OutFile $installer
+
+          New-Item -ItemType Directory -Force -Path $mt5dir | Out-Null
+
+          Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/auto",("/path:" + $mt5dir) `
+            -Wait
+
+          $terminal = Get-ChildItem `
+            $mt5dir `
+            -Recurse `
+            -Filter "terminal64.exe" |
+            Select-Object -First 1
+
+          if (-not $terminal) {
+            throw "MT5 installation failed."
           }
 
-          Write-Host "Gold EA source is ready."
-          Write-Host "Target: XAUUSD"
+          "MT5_DIR=$($terminal.DirectoryName)" |
+            Out-File $env:GITHUB_ENV -Encoding utf8
+
+          Write-Host "MT5 installed: $($terminal.DirectoryName)"
+
+      - name: Install Gold EA
+        shell: powershell
+        run: |
+          $experts = Join-Path $env:MT5_DIR "MQL5\Experts"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $experts | Out-Null
+
+          Copy-Item `
+            "$env:GITHUB_WORKSPACE\GoldFastEA.mq5" `
+            "$experts\GoldFastEA.mq5" `
+            -Force
+
+          $metaeditor = Get-ChildItem `
+            $env:MT5_DIR `
+            -Recurse `
+            -Filter "metaeditor64.exe" |
+            Select-Object -First 1
+
+          if (-not $metaeditor) {
+            throw "MetaEditor not found."
+          }
+
+          & $metaeditor.FullName `
+            /portable `
+            "/compile:$experts\GoldFastEA.mq5" `
+            /log
+
+          Start-Sleep -Seconds 5
+
+          if (-not (Test-Path "$experts\GoldFastEA.ex5")) {
+            throw "GoldFastEA.ex5 was not created."
+          }
+
+          Write-Host "GoldFastEA compiled successfully."
+
+      - name: Configure Deriv Demo
+        shell: powershell
+        env:
+          DERIV_PASSWORD: ${{ secrets.DERIV_MT5_PASSWORD }}
+
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DERIV_PASSWORD)) {
+            throw "DERIV_MT5_PASSWORD secret is missing."
+          }
+
+          $configDir = Join-Path $env:MT5_DIR "config"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $configDir | Out-Null
+
+          $config = @"
+[Common]
+Login=32432112
+Password=$($env:DERIV_PASSWORD)
+Server=Deriv-Demo
+KeepPrivate=1
+NewsEnable=0
+CertInstall=0
+ExpertsEnable=1
+AlgoTrading=1
+"@
+
+          $configPath = Join-Path `
+            $configDir `
+            "deriv-demo.ini"
+
+          Set-Content `
+            -Path $configPath `
+            -Value $config `
+            -Encoding Unicode
+
+          Write-Host "Deriv-Demo configuration created."
+
+      - name: Create Gold Startup
+        shell: powershell
+        run: |
+          $profiles = Join-Path $env:MT5_DIR "profiles\templates"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $profiles | Out-Null
+
+          $template = Join-Path `
+            $profiles `
+            "GoldFastEA.tpl"
+
+          @"
+<chart>
+id=1
+symbol=XAUUSD
+period=1
+expert=GoldFastEA
+expert_inputs=Lots=0.01
+expert_inputs=ProfitTarget=0.10
+expert_inputs=MaxLoss=10.0
+expert_inputs=TrailStart=0.10
+expert_inputs=Giveback=0.05
+expert_inputs=ScanSeconds=2
+expert_inputs=FastEMA=9
+expert_inputs=SlowEMA=21
+expert_inputs=RSIPeriod=14
+expert_inputs=Magic=32432112
+</chart>
+"@ | Set-Content `
+            -Path $template `
+            -Encoding Unicode
+
+          Write-Host "Gold startup template created."
+          Write-Host "Symbol: XAUUSD"
+          Write-Host "Timeframe: M1"
           Write-Host "Lot: 0.01"
-          Write-Host "Profit target: 0.10"
-          Write-Host "Max loss: 10.0"
+
+      - name: Launch MT5
+        shell: powershell
+        run: |
+          $terminal = Get-ChildItem `
+            $env:MT5_DIR `
+            -Recurse `
+            -Filter "terminal64.exe" |
+            Select-Object -First 1
+
+          $config = Join-Path `
+            $env:MT5_DIR `
+            "config\deriv-demo.ini"
+
+          Start-Process `
+            -FilePath $terminal.FullName `
+            -ArgumentList "/portable /config:$config /login:32432112 /server:Deriv-Demo"
+
+          Start-Sleep -Seconds 90
+
+          $process = Get-Process `
+            terminal64 `
+            -ErrorAction SilentlyContinue
+
+          if (-not $process) {
+            throw "MT5 stopped after launch."
+          }
+
+          Write-Host "MT5 running."
+          Write-Host "Account: Deriv-Demo"
+          Write-Host "Account ID: 32432112"
+          Write-Host "Gold: XAUUSD"
+          Write-Host "Lot: 0.01"
+
+      - name: Show MT5 Logs
+        shell: powershell
+        run: |
+          Write-Host "===== MT5 LOGS ====="
+
+          $logs = Get-ChildItem `
+            $env:MT5_DIR `
+            -Recurse `
+            -Include "*.log" `
+            -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 10
+
+          foreach ($log in $logs) {
+            Write-Host "===== $($log.FullName) ====="
+
+            Get-Content `
+              $log.FullName `
+              -Tail 150 `
+              -ErrorAction SilentlyContinue
+          }
+
+      - name: Gold EA Status
+        shell: powershell
+        run: |
+          Write-Host "===== GOLD EA STATUS ====="
+          Write-Host "Target: XAUUSD"
+          Write-Host "Timeframe: M1"
+          Write-Host "Lot: 0.01"
+          Write-Host "Profit Target: 0.10"
+          Write-Host "Max Loss: 10.0"
+          Write-Host "Profit Protection: ENABLED"
