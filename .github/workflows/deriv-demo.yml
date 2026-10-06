@@ -30,16 +30,29 @@ jobs:
       - name: Compile and install Gold EA
         shell: powershell
         run: |
-          $meta = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'metaeditor64.exe' | Select-Object -First 1
-          if (-not $meta) { throw 'MetaEditor was not found' }
-          $src = Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.mq5'
-          & $meta.FullName /portable /compile:$src /log
-          $built = Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.ex5'
-          if (-not (Test-Path $built)) { throw 'GoldFastEA.ex5 was not produced' }
           $experts = Join-Path $env:MT5_DIR 'MQL5\Experts'
           New-Item -ItemType Directory -Force -Path $experts | Out-Null
-          Copy-Item $built (Join-Path $experts 'GoldFastEA.ex5') -Force
-          Write-Host "GoldFastEA compiled and installed."
+          $src = Join-Path $experts 'GoldFastEA.mq5'
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.mq5') $src -Force
+
+          $meta = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'metaeditor64.exe' | Select-Object -First 1
+          if (-not $meta) { throw 'MetaEditor was not found' }
+
+          Write-Host "MetaEditor: $($meta.FullName)"
+          Write-Host "Source: $src"
+          & $meta.FullName /portable /compile:$src /log
+          Start-Sleep -Seconds 2
+
+          $built = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'GoldFastEA.ex5' | Select-Object -First 1
+          if (-not $built) {
+            Write-Host "GoldFastEA.ex5 was not produced. Compiler files:"
+            Get-ChildItem $env:MT5_DIR -Recurse -Include '*.log','*.txt' -ErrorAction SilentlyContinue |
+              Select-Object -First 20 FullName,Length,LastWriteTime | Format-Table -AutoSize
+            throw 'GoldFastEA.ex5 was not produced'
+          }
+
+          Copy-Item $built.FullName (Join-Path $experts 'GoldFastEA.ex5') -Force
+          Write-Host "GoldFastEA compiled successfully: $($built.FullName)"
 
       - name: Launch MT5 with Gold chart
         shell: powershell
