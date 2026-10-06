@@ -73,15 +73,67 @@ jobs:
           }
           Write-Host "GoldFastEA compiled successfully: $($built.FullName)"
 
-      - name: Launch MT5 with Gold chart
+      - name: Configure Deriv demo account
+        shell: powershell
+        env:
+          DERIV_PASSWORD: ${{ secrets.DERIV_MT5_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DERIV_PASSWORD)) {
+            throw 'Missing GitHub Secret DERIV_MT5_PASSWORD. Add the Deriv-Demo MT5 password to repository Secrets before running this workflow.'
+          }
+
+          $configDir = Join-Path $env:MT5_DIR 'config'
+          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+          $config = @"
+          [Common]
+          Login=32432112
+          Password=$($env:DERIV_PASSWORD)
+          Server=Deriv-Demo
+          KeepPrivate=1
+          NewsEnable=0
+          CertInstall=0
+          ExpertsEnable=1
+          AlgoTrading=1
+          "@
+
+          $configPath = Join-Path $env:MT5_DIR 'config\deriv-demo.ini'
+          Set-Content -Path $configPath -Value $config -Encoding Unicode
+          Remove-Variable DERIV_PASSWORD -ErrorAction SilentlyContinue
+          Write-Host "MT5 login configuration created for Deriv-Demo account 32432112."
+
+      - name: Launch MT5 with Deriv login
         shell: powershell
         run: |
           $terminal = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
           if (-not $terminal) { throw "MT5 terminal64.exe was not found under $env:MT5_DIR" }
+
+          $configPath = Join-Path $env:MT5_DIR 'config\deriv-demo.ini'
+          if (-not (Test-Path $configPath)) { throw "MT5 config was not created: $configPath" }
+
           Write-Host "MT5 terminal: $($terminal.FullName)"
-          Start-Process -FilePath $terminal.FullName -ArgumentList '/portable'
-          Start-Sleep -Seconds 30
-          Write-Host "MT5 launched. GoldFastEA is installed in MQL5\Experts."
+          Write-Host "Starting portable MT5 with Deriv-Demo configuration..."
+          Start-Process -FilePath $terminal.FullName -ArgumentList "/portable /config:$configPath"
+          Start-Sleep -Seconds 45
+
+          $proc = Get-Process terminal64 -ErrorAction SilentlyContinue
+          if (-not $proc) { throw 'MT5 terminal stopped immediately after launch.' }
+
+          Write-Host "MT5 launched successfully."
+          Write-Host "Expected account: Deriv-Demo / 32432112"
+          Write-Host "GoldFastEA is installed in MQL5\Experts."
+
+      - name: Show MT5 logs
+        shell: powershell
+        run: |
+          Start-Sleep -Seconds 10
+          Write-Host "=== Recent MT5 logs ==="
+          $logFiles = Get-ChildItem $env:MT5_DIR -Recurse -Include '*.log' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 8
+          foreach ($log in $logFiles) {
+            Write-Host "--- $($log.FullName) ---"
+            Get-Content $log.FullName -Tail 80 -ErrorAction SilentlyContinue
+          }
 
       - name: Keep MT5 terminal alive
         shell: powershell
