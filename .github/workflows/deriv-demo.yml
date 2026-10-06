@@ -3,13 +3,16 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "7 */6 * * *"
+
 concurrency:
   group: deriv-demo-bot
   cancel-in-progress: false
+
 jobs:
   demo:
     runs-on: windows-latest
     timeout-minutes: 350
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,84 +22,202 @@ jobs:
           $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
           $installer = Join-Path $env:TEMP 'mt5setup.exe'
           Invoke-WebRequest -Uri $url -OutFile $installer
+
           $installDir = Join-Path $env:RUNNER_TEMP 'MT5'
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
           Start-Process $installer -ArgumentList '/auto',('/path:' + $installDir) -Wait
+
           $terminal = Get-ChildItem $installDir -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
           if (-not $terminal) { throw 'MT5 terminal was not installed' }
+
           "MT5_PATH=$($terminal.FullName)" | Out-File $env:GITHUB_ENV -Encoding utf8
           "MT5_DIR=$($terminal.DirectoryName)" | Out-File $env:GITHUB_ENV -Encoding utf8
+          Write-Host "MT5 terminal: $($terminal.FullName)"
 
       - name: Compile and install Gold EA
         shell: powershell
         run: |
           $experts = Join-Path $env:MT5_DIR 'MQL5\Experts'
+          $presets = Join-Path $env:MT5_DIR 'MQL5\Presets'
           New-Item -ItemType Directory -Force -Path $experts | Out-Null
+          New-Item -ItemType Directory -Force -Path $presets | Out-Null
+
           $src = Join-Path $experts 'GoldFastEA.mq5'
           Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.mq5') $src -Force
+
+          $set = @'
+Lots=0.01
+ProfitTarget=0.10
+MaxLoss=10.0
+TrailStart=0.10
+Giveback=0.05
+ScanSeconds=2
+FastEMA=9
+SlowEMA=21
+RSIPeriod=14
+Magic=32432112
+'@
+          $setPath = Join-Path $presets 'GoldFastEA.set'
+          Set-Content -Path $setPath -Value $set -Encoding ascii
 
           $meta = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'metaeditor64.exe' | Select-Object -First 1
           if (-not $meta) { throw 'MetaEditor was not found' }
 
           Write-Host "MetaEditor: $($meta.FullName)"
-          Write-Host "Source: $src"
           & $meta.FullName /portable /compile:$src /log
           Start-Sleep -Seconds 3
 
-          Write-Host "=== MetaEditor compile diagnostics ==="
           $sourceLog = Join-Path $experts 'GoldFastEA.log'
-          $editorLog = Join-Path $env:MT5_DIR 'logs\metaeditor.log'
           if (Test-Path $sourceLog) {
-            Write-Host "--- GoldFastEA.log ---"
+            Write-Host "=== GoldFastEA compile log ==="
             Get-Content $sourceLog -Raw
-          } else {
-            Write-Host "GoldFastEA.log not found at $sourceLog"
-          }
-          if (Test-Path $editorLog) {
-            Write-Host "--- metaeditor.log ---"
-            Get-Content $editorLog -Raw
-          } else {
-            Write-Host "metaeditor.log not found at $editorLog"
           }
 
           $built = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'GoldFastEA.ex5' | Select-Object -First 1
-          if (-not $built) {
-            Write-Host "GoldFastEA.ex5 was not produced. Compiler files:"
-            Get-ChildItem $env:MT5_DIR -Recurse -Include '*.log','*.txt' -ErrorAction SilentlyContinue |
-              Select-Object -First 20 FullName,Length,LastWriteTime | Format-Table -AutoSize
-            throw 'GoldFastEA.ex5 was not produced'
-          }
+          if (-not $built) { throw 'GoldFastEA.ex5 was not produced' }
 
           $target = Join-Path $experts 'GoldFastEA.ex5'
           if ($built.FullName -ne $target) {
             Copy-Item $built.FullName $target -Force
           }
-          Write-Host "GoldFastEA compiled successfully: $($built.FullName)"
 
-      - name: Launch MT5 with Gold chart
+          Write-Host "GoldFastEA compiled successfully: $target"
+
+      - name: Create MT5 Gold startup configuration
+        shell: powershell
+        env:
+          DERIV_MT5_PASSWORD: ${{ secrets.DERIV_MT5_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DERIV_MT5_PASSWORD)) {
+            throw 'DERIV_MT5_PASSWORD GitHub secret is missing.'
+          }
+
+          $configDir = Join-Path $env:MT5_DIR 'config'
+          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+
+          $config = @"
+[Common]
+Login=32432112
+Server=Deriv-Demo
+Password=$env:DERIV_MT5_PASSWORD
+KeepPrivate=1
+NewsEnable=0
+CertInstall=1
+
+[Charts]
+ProfileLast=Default
+MaxBars=100000
+TradeHistory=1
+TradeLevels=1
+
+[Experts]
+AllowLiveTrading=1
+AllowDllImport=0
+Enabled=1
+Account=0
+Profile=0
+
+[StartUp]
+Expert=GoldFastEA
+Symbol=XAUUSD
+Period=M1
+ExpertParameters=GoldFastEA.set
+"@
+
+          $configPath = Join-Path $configDir 'gold-startup.ini'
+          Set-Content -Path $configPath -Value $config -Encoding ascii
+
+          Write-Host 'MT5 Gold startup configuration created.'
+          Write-Host 'Account: 32432112'
+          Write-Host 'Server: Deriv-Demo'
+          Write-Host 'Symbol: XAUUSD'
+          Write-Host 'EA: GoldFastEA'
+          Write-Host 'Trading: ENABLED'
+          Write-Host 'Password is supplied only through the GitHub secret.'
+
+      - name: Launch MT5 and Gold EA
         shell: powershell
         run: |
           $terminal = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
           if (-not $terminal) { throw "MT5 terminal64.exe was not found under $env:MT5_DIR" }
+
           Write-Host "MT5 terminal: $($terminal.FullName)"
-          Start-Process -FilePath $terminal.FullName -ArgumentList '/portable'
-          Start-Sleep -Seconds 30
-          Write-Host "MT5 launched. GoldFastEA is installed in MQL5\Experts."
+          $configPath = Join-Path $env:MT5_DIR 'config\gold-startup.ini'
+
+          Start-Process -FilePath $terminal.FullName -ArgumentList "/portable","/config:$configPath"
+          Start-Sleep -Seconds 45
+
+          if (-not (Get-Process terminal64 -ErrorAction SilentlyContinue)) {
+            throw 'MT5 terminal stopped immediately after launch.'
+          }
+
+          Write-Host 'MT5 launched with GoldFastEA startup configuration.'
+
+      - name: Verify MT5 connection and Gold EA
+        shell: powershell
+        run: |
+          $deadline = (Get-Date).AddSeconds(120)
+          $foundReady = $false
+          $foundConnection = $false
+
+          while ((Get-Date) -lt $deadline) {
+            if (-not (Get-Process terminal64 -ErrorAction SilentlyContinue)) {
+              throw 'MT5 terminal stopped unexpectedly during verification.'
+            }
+
+            $logs = Get-ChildItem (Join-Path $env:MT5_DIR 'logs') -Filter '*.log' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 5
+
+            foreach ($log in $logs) {
+              $text = Get-Content $log.FullName -Raw -ErrorAction SilentlyContinue
+              if ($text -match 'GOLD EA READY') { $foundReady = $true }
+              if ($text -match 'connected|authorized|login|Deriv-Demo') { $foundConnection = $true }
+            }
+
+            if ($foundReady) {
+              Write-Host 'GOLD EA READY detected.'
+              break
+            }
+
+            Start-Sleep -Seconds 10
+          }
+
+          if (-not $foundConnection) {
+            Write-Host 'WARNING: no clear Deriv connection message was found in the first 120 seconds.'
+          }
+
+          if (-not $foundReady) {
+            Write-Host 'WARNING: GOLD EA READY was not found in the first 120 seconds.'
+            Write-Host '=== Recent MT5 logs ==='
+            Get-ChildItem (Join-Path $env:MT5_DIR 'logs') -Filter '*.log' -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 3 |
+              ForEach-Object {
+                Write-Host "----- $($_.FullName) -----"
+                Get-Content $_.FullName -Tail 120 -ErrorAction SilentlyContinue
+              }
+          }
 
       - name: Keep MT5 terminal alive
         shell: powershell
         run: |
           while ($true) {
             Start-Sleep -Seconds 60
+
             if (-not (Get-Process terminal64 -ErrorAction SilentlyContinue)) {
               throw 'MT5 terminal stopped unexpectedly.'
             }
+
+            Write-Host "MT5 still running: $(Get-Date -Format o)"
           }
 
-      - name: Upload EA source
+      - name: Upload Gold EA diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: deriv-gold-ea-${{ github.run_id }}
-          path: GoldFastEA.mq5
-          if-no-files-found: error
+          path: |
+            GoldFastEA.mq5
+            ${{ env.MT5_DIR }}\logs\*.log
+          if-no-files-found: warn
