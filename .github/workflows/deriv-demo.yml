@@ -1,8 +1,21 @@
 name: Deriv MT5 Gold EA
+
 on:
   workflow_dispatch:
+    inputs:
+      confirm_run:
+        description: "Start the Deriv MT5 Gold EA demo workflow"
+        required: true
+        default: "YES"
+        type: string
+  push:
+    branches:
+      - main
   schedule:
     - cron: "7 */6 * * *"
+
+permissions:
+  contents: read
 
 concurrency:
   group: deriv-demo-bot
