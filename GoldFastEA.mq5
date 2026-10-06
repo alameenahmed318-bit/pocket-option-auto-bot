@@ -1,8 +1,6 @@
 #property strict
 #property version "1.0"
 
-#include <Trade/Trade.mqh>
-
 input double Lots = 0.01;
 input double ProfitTarget = 0.10;
 input double MaxLoss = 10.0;
@@ -14,7 +12,6 @@ input int SlowEMA = 21;
 input int RSIPeriod = 14;
 input long Magic = 32432112;
 
-CTrade trade;
 int hFast = INVALID_HANDLE;
 int hSlow = INVALID_HANDLE;
 int hRSI  = INVALID_HANDLE;
@@ -43,8 +40,6 @@ int OnInit()
       return INIT_FAILED;
    }
 
-   trade.SetExpertMagicNumber(Magic);
-   trade.SetDeviationInPoints(30);
 
    hFast=iMA(_Symbol,PERIOD_M1,FastEMA,0,MODE_EMA,PRICE_CLOSE);
    hSlow=iMA(_Symbol,PERIOD_M1,SlowEMA,0,MODE_EMA,PRICE_CLOSE);
@@ -67,6 +62,40 @@ void OnDeinit(const int reason)
    if(hFast!=INVALID_HANDLE) IndicatorRelease(hFast);
    if(hSlow!=INVALID_HANDLE) IndicatorRelease(hSlow);
    if(hRSI!=INVALID_HANDLE) IndicatorRelease(hRSI);
+}
+
+bool ClosePosition(ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket)) return false;
+   string symbol=PositionGetString(POSITION_SYMBOL);
+   double volume=PositionGetDouble(POSITION_VOLUME);
+   ENUM_POSITION_TYPE ptype=(ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+   MqlTradeRequest req={};
+   MqlTradeResult res={};
+   req.action=TRADE_ACTION_DEAL;
+   req.position=ticket;
+   req.symbol=symbol;
+   req.volume=volume;
+   req.deviation=30;
+   req.type=(ptype==POSITION_TYPE_BUY)?ORDER_TYPE_SELL:ORDER_TYPE_BUY;
+   req.price=(req.type==ORDER_TYPE_BUY)?SymbolInfoDouble(symbol,SYMBOL_ASK):SymbolInfoDouble(symbol,SYMBOL_BID);
+   req.magic=Magic;
+   return OrderSend(req,res) && (res.retcode==TRADE_RETCODE_DONE || res.retcode==TRADE_RETCODE_DONE_PARTIAL);
+}
+
+bool OpenMarket(ENUM_ORDER_TYPE type,double volume,string comment)
+{
+   MqlTradeRequest req={};
+   MqlTradeResult res={};
+   req.action=TRADE_ACTION_DEAL;
+   req.symbol=_Symbol;
+   req.volume=volume;
+   req.type=type;
+   req.price=(type==ORDER_TYPE_BUY)?SymbolInfoDouble(_Symbol,SYMBOL_ASK):SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   req.deviation=30;
+   req.magic=Magic;
+   req.comment=comment;
+   return OrderSend(req,res) && (res.retcode==TRADE_RETCODE_DONE || res.retcode==TRADE_RETCODE_DONE_PARTIAL);
 }
 
 bool OurPosition(ulong &ticket)
@@ -118,11 +147,10 @@ void ProtectPosition()
 
    if(closeNow)
    {
-      if(trade.PositionClose(ticket))
+      if(ClosePosition(ticket))
          Print("GOLD CLOSED | reason=",reason," | profit=",DoubleToString(p,2));
       else
-         Print("GOLD CLOSE FAILED | reason=",reason," | retcode=",trade.ResultRetcode(),
-               " | ",trade.ResultRetcodeDescription());
+         Print("GOLD CLOSE FAILED | reason=",reason);
       peakProfit=0.0;
    }
 }
@@ -174,16 +202,15 @@ void OpenTrade()
    volume=MathMax(minVol,MathMin(maxVol,volume));
 
    bool ok=false;
-   if(signal>0) ok=trade.Buy(volume,_Symbol,0,0,0,"GOLD_FAST_BUY");
-   else ok=trade.Sell(volume,_Symbol,0,0,0,"GOLD_FAST_SELL");
+   if(signal>0) ok=OpenMarket(ORDER_TYPE_BUY,volume,"GOLD_FAST_BUY");
+   else ok=OpenMarket(ORDER_TYPE_SELL,volume,"GOLD_FAST_SELL");
 
    if(ok)
       Print("GOLD OPENED | side=",signal>0?"BUY":"SELL",
             " | lot=",DoubleToString(volume,2),
-            " | price=",DoubleToString(trade.ResultPrice(),_Digits));
+            " | price=",DoubleToString(SymbolInfoDouble(_Symbol,signal>0?SYMBOL_ASK:SYMBOL_BID),_Digits));
    else
-      Print("GOLD ORDER FAILED | retcode=",trade.ResultRetcode(),
-            " | ",trade.ResultRetcodeDescription());
+      Print("GOLD ORDER FAILED");
 }
 
 void OnTimer()
