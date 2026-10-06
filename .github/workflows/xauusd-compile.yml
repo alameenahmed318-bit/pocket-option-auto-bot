@@ -23,12 +23,19 @@ jobs:
 
       - name: Compile MQ5 to EX5
         run: |
-          docker run --rm             -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts"             -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro"             hudsonventura/mt5:2.2 /build.sh
+          docker run --rm \
+  -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts" \
+  -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Experts" \
+  -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro" \
+  -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Include:ro" \
+  hudsonventura/mt5:2.2 /build.sh
 
       - name: Verify EX5
         run: |
-          find mql5/Experts -type f -name '*.ex5' -print
-          test -f mql5/Experts/XAUUSD_FastScalper.ex5
+          find mql5 -type f -name '*.ex5' -print
+          EX5="$(find mql5 -type f -name '*.ex5' | head -n 1)"
+          test -n "$EX5"
+          cp "$EX5" mql5/Experts/XAUUSD_FastScalper.ex5
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
