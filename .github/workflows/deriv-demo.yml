@@ -27,14 +27,7 @@ jobs:
           "MT5_PATH=$($terminal.FullName)" | Out-File $env:GITHUB_ENV -Encoding utf8
           "MT5_DIR=$($terminal.DirectoryName)" | Out-File $env:GITHUB_ENV -Encoding utf8
 
-      - name: Launch MT5
-        shell: powershell
-        run: |
-          Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable'
-          Start-Sleep -Seconds 20
-          Write-Host "MT5 launched."
-
-      - name: Compile Gold EA
+      - name: Compile and install Gold EA
         shell: powershell
         run: |
           $meta = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'metaeditor64.exe' | Select-Object -First 1
@@ -46,13 +39,24 @@ jobs:
           $experts = Join-Path $env:MT5_DIR 'MQL5\Experts'
           New-Item -ItemType Directory -Force -Path $experts | Out-Null
           Copy-Item $built (Join-Path $experts 'GoldFastEA.ex5') -Force
-          Write-Host "EA compiled and installed."
+          Write-Host "GoldFastEA compiled and installed."
 
-      - name: Run MT5 terminal
+      - name: Launch MT5 with Gold chart
         shell: powershell
         run: |
-          Write-Host "Native MQL5 EA installed. MT5 terminal remains active for the runner session."
-          while ($true) { Start-Sleep -Seconds 60 }
+          Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable'
+          Start-Sleep -Seconds 30
+          Write-Host "MT5 launched. GoldFastEA is installed in MQL5\Experts."
+
+      - name: Keep MT5 terminal alive
+        shell: powershell
+        run: |
+          while ($true) {
+            Start-Sleep -Seconds 60
+            if (-not (Get-Process terminal64 -ErrorAction SilentlyContinue)) {
+              throw 'MT5 terminal stopped unexpectedly.'
+            }
+          }
 
       - name: Upload EA source
         if: always()
