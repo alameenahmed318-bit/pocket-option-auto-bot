@@ -1,9 +1,9 @@
 //+------------------------------------------------------------------+
 //| XAUUSD_FastScalper.mq5                                           |
-//| GOLD ONLY - Fast Scalper                                         |
+//| GOLD ONLY - Fast Small-Profit Scalper                            |
 //+------------------------------------------------------------------+
 #property strict
-#property version "1.01"
+#property version "1.02"
 
 #include <Trade/Trade.mqh>
 CTrade trade;
@@ -12,15 +12,15 @@ input double LotSize           = 0.01;
 input int    FastEMA           = 9;
 input int    SlowEMA           = 21;
 input int    RSIPeriod         = 7;
-input double BuyRSIMin         = 52.0;
-input double SellRSIMax        = 48.0;
+input double BuyRSIMin         = 50.5;
+input double SellRSIMax        = 49.5;
 input int    ATRPeriod         = 14;
-input double SL_ATR_Mult       = 1.8;
-input double Trail_ATR_Mult    = 1.2;
+input double SL_ATR_Mult       = 1.5;
+input double Trail_ATR_Mult    = 0.8;
 input double ProfitTargetMoney = 0.10;
 input double MaxLossMoney      = 10.0;
-input int    MaxPositions      = 5;
-input int    CooldownSeconds   = 10;
+input int    MaxPositions      = 10;
+input int    CooldownSeconds   = 2;
 input ulong  MagicNumber       = 26100601;
 
 int hFast, hSlow, hRSI, hATR;
@@ -39,8 +39,7 @@ int CountMyPositions()
    for(int i=PositionsTotal()-1; i>=0; i--)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(!PositionSelectByTicket(ticket)) continue;
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
       if((ulong)PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
          PositionGetString(POSITION_SYMBOL) == _Symbol)
          count++;
@@ -52,28 +51,28 @@ void ManagePositions()
 {
    double atr[];
    ArraySetAsSeries(atr,true);
-   if(CopyBuffer(hATR,0,0,1,atr) < 1) return;
-   if(atr[0] <= 0) return;
+   if(CopyBuffer(hATR,0,0,1,atr) < 1 || atr[0] <= 0) return;
 
    for(int i=PositionsTotal()-1; i>=0; i--)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(!PositionSelectByTicket(ticket)) continue;
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
       if((ulong)PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
       if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
 
       double profit = PositionGetDouble(POSITION_PROFIT);
-      long type     = PositionGetInteger(POSITION_TYPE);
-      double sl     = PositionGetDouble(POSITION_SL);
-      double tp     = PositionGetDouble(POSITION_TP);
+      long type = PositionGetInteger(POSITION_TYPE);
+      double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP);
 
+      // Take small profit immediately.
       if(profit >= ProfitTargetMoney)
       {
          trade.PositionClose(ticket);
          continue;
       }
 
+      // Hard maximum loss per position.
       if(profit <= -MaxLossMoney)
       {
          trade.PositionClose(ticket);
@@ -91,8 +90,7 @@ void ManagePositions()
          if(candidate > 0 && candidate < bid && (sl == 0 || candidate > sl))
             newSL = candidate;
       }
-
-      if(type == POSITION_TYPE_SELL)
+      else if(type == POSITION_TYPE_SELL)
       {
          double candidate = NormalizeDouble(ask + atr[0] * Trail_ATR_Mult,digits);
          if(candidate > ask && (sl == 0 || candidate < sl))
@@ -122,9 +120,9 @@ void OnTick()
    if(CopyBuffer(hFast,0,0,2,fast) < 2) return;
    if(CopyBuffer(hSlow,0,0,2,slow) < 2) return;
    if(CopyBuffer(hRSI,0,0,2,rsi) < 2) return;
-   if(CopyBuffer(hATR,0,0,2,atr) < 2) return;
-   if(atr[0] <= 0) return;
+   if(CopyBuffer(hATR,0,0,2,atr) < 2 || atr[0] <= 0) return;
 
+   // Current-candle momentum: deliberately light filters for faster entries.
    bool buySignal  = fast[0] > slow[0] && rsi[0] >= BuyRSIMin;
    bool sellSignal = fast[0] < slow[0] && rsi[0] <= SellRSIMax;
 
@@ -167,7 +165,7 @@ int OnInit()
       hRSI == INVALID_HANDLE || hATR == INVALID_HANDLE)
       return INIT_FAILED;
 
-   Print("XAUUSD_FastScalper READY | Lot=0.01");
+   Print("XAUUSD_FastScalper v1.02 READY | Lot=0.01 | Target=0.10 | Cooldown=2s");
    return INIT_SUCCEEDED;
 }
 
