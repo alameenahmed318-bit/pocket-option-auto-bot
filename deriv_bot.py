@@ -4,7 +4,7 @@ from datetime import datetime,timezone
 import MetaTrader5 as mt5
 import pandas as pd
 LOGIN=int(os.getenv("MT5_LOGIN","32432112")); SERVER=os.getenv("MT5_SERVER","Deriv-Demo"); PASSWORD=os.getenv("MT5_PASSWORD",""); MT5_PATH=os.getenv("MT5_PATH","")
-LOT=float(os.getenv("LOT","0.10")); SCAN=float(os.getenv("SCAN_SECONDS","2")); TARGET=float(os.getenv("PROFIT_TARGET","0.10")); MAXLOSS=float(os.getenv("MAX_LOSS","10"))
+LOT=float(os.getenv("LOT","0.01")); SCAN=float(os.getenv("SCAN_SECONDS","2")); TARGET=float(os.getenv("PROFIT_TARGET","0.10")); MAXLOSS=float(os.getenv("MAX_LOSS","10"))
 TRAIL=float(os.getenv("TRAIL_START","0.10")); GIVEBACK=float(os.getenv("TRAIL_GIVEBACK","0.05")); COOLDOWN=float(os.getenv("COOLDOWN_SECONDS","3")); MAXPOS=int(os.getenv("MAX_POSITIONS","1")); DRY=os.getenv("DRY_RUN","false").lower()=="true"; MAGIC=int(os.getenv("MT5_MAGIC","32432112"))
 LOG="deriv_mt5_gold.log"
 def log(x):
@@ -14,26 +14,20 @@ def stop(x): log("ERROR | "+x); raise SystemExit(1)
 if not PASSWORD: stop("MT5_PASSWORD secret is missing.")
 if not MT5_PATH: stop("MT5_PATH environment variable is missing.")
 if not os.path.exists(MT5_PATH): stop(f"MT5 terminal not found: {MT5_PATH}")
-# Own the terminal lifecycle from Python so GitHub Actions does not leave a
-# separately-started terminal with an IPC endpoint that the API cannot use.
 mt5_ok=False
-for attempt in range(1,7):
+for attempt in range(1,9):
     try: mt5.shutdown()
     except Exception: pass
-    if os.name == "nt":
-        os.system("taskkill /F /IM terminal64.exe >NUL 2>&1")
-        time.sleep(3)
-    log(f"MT5 initialize attempt {attempt}/6")
-    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=180000):
+    log(f"MT5 initialize attempt {attempt}/8 | portable=True")
+    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=180000,portable=True):
         mt5_ok=True
         break
     err=mt5.last_error()
-    log(f"MT5 initialize failed {attempt}/6 | err={err}")
+    log(f"MT5 initialize failed {attempt}/8 | err={err}")
     try: mt5.shutdown()
     except Exception: pass
-    time.sleep(15)
-if not mt5_ok:
-    stop(f"MT5 initialize failed after 6 attempts: {mt5.last_error()}")
+    time.sleep(10)
+if not mt5_ok: stop(f"MT5 initialize failed after 8 attempts: {mt5.last_error()}")
 a=mt5.account_info()
 if a is None: stop(f"account_info failed: {mt5.last_error()}")
 log(f"CONNECTED | login={a.login} | server={a.server} | balance={a.balance:.2f} | equity={a.equity:.2f} | currency={a.currency}")
