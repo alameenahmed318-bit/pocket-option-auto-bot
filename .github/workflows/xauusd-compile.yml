@@ -25,18 +25,22 @@ jobs:
       - name: Compile with MetaTrader 5 Docker
         run: |
           docker pull hudsonventura/mt5:2.2
-          docker run --rm             -v "$GITHUB_WORKSPACE:/workspace"             -w /workspace             hudsonventura/mt5:2.2             bash -lc 'mkdir -p /home/headless/.wine/drive_c/MQL5/Experts /home/headless/.wine/drive_c/MQL5/Include && cp /workspace/mql5/Experts/XAUUSD_FastScalper.mq5 /home/headless/.wine/drive_c/MQL5/Experts/ && cp -r /workspace/mql5/Include/. /home/headless/.wine/drive_c/MQL5/Include/ 2>/dev/null || true; /build.sh'
+          docker run --rm             -v "$GITHUB_WORKSPACE:/workspace"             -w /workspace             hudsonventura/mt5:2.2             bash -lc 'mkdir -p /home/headless/.wine/drive_c/MQL5/Experts /home/headless/.wine/drive_c/MQL5/Include && cp /workspace/mql5/Experts/XAUUSD_FastScalper.mq5 /home/headless/.wine/drive_c/MQL5/Experts/ && cp -r /workspace/mql5/Include/. /home/headless/.wine/drive_c/MQL5/Include/ 2>/dev/null || true; /build.sh; echo "=== EX5 SEARCH INSIDE CONTAINER ==="; find /home/headless -type f -name "*.ex5" -print 2>/dev/null; find /workspace -type f -name "*.ex5" -print 2>/dev/null; echo "=== ALL COMPILED FILES ==="; find /home/headless/.wine -type f -mmin -10 2>/dev/null | grep -Ei "\.(ex5|ex4)$" || true'
 
-      - name: Locate compiled EX5
+      - name: Locate and copy EX5
         run: |
-          find . -type f -name '*.ex5' -print
-          EX5="$(find . -type f -name 'XAUUSD_FastScalper.ex5' | head -n 1)"
+          echo "=== HOST EX5 SEARCH ==="
+          find "$GITHUB_WORKSPACE" -type f -name '*.ex5' -print || true
+          EX5="$(find "$GITHUB_WORKSPACE" -type f -name 'XAUUSD_FastScalper.ex5' | head -n 1)"
           if [ -z "$EX5" ]; then
-            EX5="$(find . -type f -name '*.ex5' | head -n 1)"
+            EX5="$(find "$GITHUB_WORKSPACE" -type f -name '*.ex5' | head -n 1)"
           fi
-          test -n "$EX5"
-          cp "$EX5" mql5/Experts/XAUUSD_FastScalper.ex5
-          ls -lh mql5/Experts/XAUUSD_FastScalper.ex5
+          if [ -z "$EX5" ]; then
+            echo "ERROR: EX5 was not exported by compiler."
+            exit 1
+          fi
+          cp "$EX5" "$GITHUB_WORKSPACE/mql5/Experts/XAUUSD_FastScalper.ex5"
+          ls -lh "$GITHUB_WORKSPACE/mql5/Experts/XAUUSD_FastScalper.ex5"
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
