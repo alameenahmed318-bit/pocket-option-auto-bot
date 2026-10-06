@@ -3,7 +3,7 @@
 //| GOLD ONLY - Fast Small-Profit Scalper                            |
 //+------------------------------------------------------------------+
 #property strict
-#property version "1.03"
+#property version "1.04"
 
 input double LotSize=0.01;
 input int FastEMA=9;
@@ -33,7 +33,10 @@ ENUM_ORDER_TYPE_FILLING GetFilling(){
 }
 
 bool SendDeal(ENUM_ORDER_TYPE type,double volume,double sl,string comment){
- MqlTradeRequest req={0}; MqlTradeResult res={0};
+ MqlTradeRequest req;
+ MqlTradeResult res;
+ ZeroMemory(req);
+ ZeroMemory(res);
  double price=(type==ORDER_TYPE_BUY)?SymbolInfoDouble(_Symbol,SYMBOL_ASK):SymbolInfoDouble(_Symbol,SYMBOL_BID);
  int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
  req.action=TRADE_ACTION_DEAL; req.symbol=_Symbol; req.volume=volume; req.type=type;
@@ -48,7 +51,10 @@ bool ClosePosition(ulong ticket){
  string symbol=PositionGetString(POSITION_SYMBOL);
  double volume=PositionGetDouble(POSITION_VOLUME);
  long ptype=PositionGetInteger(POSITION_TYPE);
- MqlTradeRequest req={0}; MqlTradeResult res={0};
+ MqlTradeRequest req;
+ MqlTradeResult res;
+ ZeroMemory(req);
+ ZeroMemory(res);
  req.action=TRADE_ACTION_DEAL; req.position=ticket; req.symbol=symbol; req.volume=volume;
  req.type=(ptype==POSITION_TYPE_BUY)?ORDER_TYPE_SELL:ORDER_TYPE_BUY;
  req.price=(req.type==ORDER_TYPE_BUY)?SymbolInfoDouble(symbol,SYMBOL_ASK):SymbolInfoDouble(symbol,SYMBOL_BID);
@@ -59,7 +65,10 @@ bool ClosePosition(ulong ticket){
 
 bool ModifySL(ulong ticket,double newSL){
  if(!PositionSelectByTicket(ticket))return false;
- MqlTradeRequest req={0}; MqlTradeResult res={0};
+ MqlTradeRequest req;
+ MqlTradeResult res;
+ ZeroMemory(req);
+ ZeroMemory(res);
  req.action=TRADE_ACTION_SLTP; req.position=ticket; req.symbol=PositionGetString(POSITION_SYMBOL);
  req.sl=newSL; req.tp=PositionGetDouble(POSITION_TP);
  if(!OrderSend(req,res))return false;
@@ -108,11 +117,15 @@ int OnInit(){
  if(!IsGoldSymbol())return INIT_FAILED;
  hFast=iMA(_Symbol,PERIOD_M1,FastEMA,0,MODE_EMA,PRICE_CLOSE);
  hSlow=iMA(_Symbol,PERIOD_M1,SlowEMA,0,MODE_EMA,PRICE_CLOSE);
- hRSI=iRSI(_Symbol,PERIOD_M1,RSIPeriod,PRICE_CLOSE);hATR=iATR(_Symbol,PERIOD_M1,ATRPeriod);
+ hRSI=iRSI(_Symbol,PERIOD_M1,RSIPeriod,PRICE_CLOSE);
+ hATR=iATR(_Symbol,PERIOD_M1,ATRPeriod);
  if(hFast==INVALID_HANDLE||hSlow==INVALID_HANDLE||hRSI==INVALID_HANDLE||hATR==INVALID_HANDLE)return INIT_FAILED;
- Print("XAUUSD_FastScalper v1.03 READY | Lot=0.01 | Target=0.10 | Cooldown=2s");return INIT_SUCCEEDED;
+ Print("XAUUSD_FastScalper v1.04 READY | Lot=0.01 | Target=0.10 | Cooldown=2s");
+ return INIT_SUCCEEDED;
 }
 void OnDeinit(const int reason){
- if(hFast!=INVALID_HANDLE)IndicatorRelease(hFast);if(hSlow!=INVALID_HANDLE)IndicatorRelease(hSlow);
- if(hRSI!=INVALID_HANDLE)IndicatorRelease(hRSI);if(hATR!=INVALID_HANDLE)IndicatorRelease(hATR);
+ if(hFast!=INVALID_HANDLE)IndicatorRelease(hFast);
+ if(hSlow!=INVALID_HANDLE)IndicatorRelease(hSlow);
+ if(hRSI!=INVALID_HANDLE)IndicatorRelease(hRSI);
+ if(hATR!=INVALID_HANDLE)IndicatorRelease(hATR);
 }
