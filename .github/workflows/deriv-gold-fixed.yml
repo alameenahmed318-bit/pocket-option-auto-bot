@@ -1,0 +1,154 @@
+name: Deriv MT5 Gold EA
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7 */6 * * *"
+concurrency:
+  group: deriv-demo-bot
+  cancel-in-progress: false
+jobs:
+  demo:
+    runs-on: windows-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MetaTrader 5
+        shell: powershell
+        run: |
+          $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
+          $installer = Join-Path $env:TEMP 'mt5setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $installDir = Join-Path $env:RUNNER_TEMP 'MT5'
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Start-Process $installer -ArgumentList '/auto',('/path:' + $installDir) -Wait
+          $terminal = Get-ChildItem $installDir -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
+          if (-not $terminal) { throw 'MT5 terminal was not installed' }
+          "MT5_PATH=$($terminal.FullName)" | Out-File $env:GITHUB_ENV -Encoding utf8
+          "MT5_DIR=$($terminal.DirectoryName)" | Out-File $env:GITHUB_ENV -Encoding utf8
+
+      - name: Compile and install Gold EA
+        shell: powershell
+        run: |
+          $experts = Join-Path $env:MT5_DIR 'MQL5\Experts'
+          New-Item -ItemType Directory -Force -Path $experts | Out-Null
+          $src = Join-Path $experts 'GoldFastEA.mq5'
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.mq5') $src -Force
+
+          $meta = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'metaeditor64.exe' | Select-Object -First 1
+          if (-not $meta) { throw 'MetaEditor was not found' }
+
+          Write-Host "MetaEditor: $($meta.FullName)"
+          Write-Host "Source: $src"
+          & $meta.FullName /portable /compile:$src /log
+          Start-Sleep -Seconds 3
+
+          Write-Host "=== MetaEditor compile diagnostics ==="
+          $sourceLog = Join-Path $experts 'GoldFastEA.log'
+          $editorLog = Join-Path $env:MT5_DIR 'logs\metaeditor.log'
+          if (Test-Path $sourceLog) {
+            Write-Host "--- GoldFastEA.log ---"
+            Get-Content $sourceLog -Raw
+          } else {
+            Write-Host "GoldFastEA.log not found at $sourceLog"
+          }
+          if (Test-Path $editorLog) {
+            Write-Host "--- metaeditor.log ---"
+            Get-Content $editorLog -Raw
+          } else {
+            Write-Host "metaeditor.log not found at $editorLog"
+          }
+
+          $built = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'GoldFastEA.ex5' | Select-Object -First 1
+          if (-not $built) {
+            Write-Host "GoldFastEA.ex5 was not produced. Compiler files:"
+            Get-ChildItem $env:MT5_DIR -Recurse -Include '*.log','*.txt' -ErrorAction SilentlyContinue |
+              Select-Object -First 20 FullName,Length,LastWriteTime | Format-Table -AutoSize
+            throw 'GoldFastEA.ex5 was not produced'
+          }
+
+          $target = Join-Path $experts 'GoldFastEA.ex5'
+          if ($built.FullName -ne $target) {
+            Copy-Item $built.FullName $target -Force
+          }
+          Write-Host "GoldFastEA compiled successfully: $($built.FullName)"
+
+      - name: Configure Deriv demo account
+        shell: powershell
+        env:
+          DERIV_PASSWORD: ${{ secrets.DERIV_MT5_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DERIV_PASSWORD)) {
+            throw 'Missing GitHub Secret DERIV_MT5_PASSWORD. Add the Deriv-Demo MT5 password to repository Secrets before running this workflow.'
+          }
+
+          $configDir = Join-Path $env:MT5_DIR 'config'
+          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+          $config = @"
+          [Common]
+          Login=32432112
+          Password=$($env:DERIV_PASSWORD)
+          Server=Deriv-Demo
+          KeepPrivate=1
+          NewsEnable=0
+          CertInstall=0
+          ExpertsEnable=1
+          AlgoTrading=1
+          "@
+
+          $configPath = Join-Path $env:MT5_DIR 'config\deriv-demo.ini'
+          Set-Content -Path $configPath -Value $config -Encoding Unicode
+          Remove-Variable DERIV_PASSWORD -ErrorAction SilentlyContinue
+          Write-Host "MT5 login configuration created for Deriv-Demo account 32432112."
+
+      - name: Launch MT5 with Deriv login
+        shell: powershell
+        run: |
+          $terminal = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
+          if (-not $terminal) { throw "MT5 terminal64.exe was not found under $env:MT5_DIR" }
+
+          $configPath = Join-Path $env:MT5_DIR 'config\deriv-demo.ini'
+          if (-not (Test-Path $configPath)) { throw "MT5 config was not created: $configPath" }
+
+          Write-Host "MT5 terminal: $($terminal.FullName)"
+          Write-Host "Starting portable MT5 with Deriv-Demo configuration..."
+          Start-Process -FilePath $terminal.FullName -ArgumentList "/portable /config:$configPath /login:32432112 /server:Deriv-Demo"
+          Start-Sleep -Seconds 90
+
+          $proc = Get-Process terminal64 -ErrorAction SilentlyContinue
+          if (-not $proc) { throw 'MT5 terminal stopped immediately after launch.' }
+
+          Write-Host "MT5 launched successfully."
+          Write-Host "Expected account: Deriv-Demo / 32432112"
+          Write-Host "GoldFastEA is installed in MQL5\Experts."
+
+      - name: Show MT5 logs
+        shell: powershell
+        run: |
+          Start-Sleep -Seconds 10
+          Write-Host "=== Recent MT5 logs ==="
+          $logFiles = Get-ChildItem $env:MT5_DIR -Recurse -Include '*.log' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 8
+          foreach ($log in $logFiles) {
+            Write-Host "--- $($log.FullName) ---"
+            Get-Content $log.FullName -Tail 80 -ErrorAction SilentlyContinue
+          }
+
+      - name: Keep MT5 terminal alive
+        shell: powershell
+        run: |
+          while ($true) {
+            Start-Sleep -Seconds 60
+            if (-not (Get-Process terminal64 -ErrorAction SilentlyContinue)) {
+              throw 'MT5 terminal stopped unexpectedly.'
+            }
+          }
+
+      - name: Upload EA source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deriv-gold-ea-${{ github.run_id }}
+          path: GoldFastEA.mq5
+          if-no-files-found: error
