@@ -1,4 +1,4 @@
-name: Deriv MT5 Gold Bot
+name: Deriv MT5 Gold EA
 on:
   workflow_dispatch:
   schedule:
@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+
       - name: Install MetaTrader 5
         shell: powershell
         run: |
@@ -23,35 +24,40 @@ jobs:
           Start-Process $installer -ArgumentList '/auto',('/path:' + $installDir) -Wait
           $terminal = Get-ChildItem $installDir -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
           if (-not $terminal) { throw 'MT5 terminal was not installed' }
-          "MT5_PATH=$($terminal.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
-          Write-Host "MT5 terminal: $($terminal.FullName)"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Python dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements-deriv.txt
-      - name: Launch MT5 and run Gold bot
-        env:
-          MT5_LOGIN: "32432112"
-          MT5_SERVER: "Deriv-Demo"
-          MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+          "MT5_PATH=$($terminal.FullName)" | Out-File $env:GITHUB_ENV -Encoding utf8
+          "MT5_DIR=$($terminal.DirectoryName)" | Out-File $env:GITHUB_ENV -Encoding utf8
+
+      - name: Launch MT5
         shell: powershell
         run: |
-          if (-not $env:MT5_PATH) { throw 'MT5_PATH is missing' }
-          Write-Host "Launching MT5 terminal explicitly in portable mode..."
-          $mt5 = Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable' -PassThru
-          Start-Sleep -Seconds 30
-          if ($mt5.HasExited) {
-            Write-Host "MT5 exited immediately with code $($mt5.ExitCode)"
-          } else {
-            Write-Host "MT5 process is running: PID=$($mt5.Id)"
-          }
-          Get-Process terminal64 -ErrorAction SilentlyContinue | Select-Object Id,Path,Responding | Format-Table -AutoSize
-          python -u deriv_bot.py
-      - name: Upload MT5 Gold trade log
+          Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable'
+          Start-Sleep -Seconds 20
+          Write-Host "MT5 launched."
+
+      - name: Compile Gold EA
+        shell: powershell
+        run: |
+          $meta = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'metaeditor64.exe' | Select-Object -First 1
+          if (-not $meta) { throw 'MetaEditor was not found' }
+          $src = Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.mq5'
+          & $meta.FullName /portable /compile:$src /log
+          $built = Join-Path $env:GITHUB_WORKSPACE 'GoldFastEA.ex5'
+          if (-not (Test-Path $built)) { throw 'GoldFastEA.ex5 was not produced' }
+          $experts = Join-Path $env:MT5_DIR 'MQL5\Experts'
+          New-Item -ItemType Directory -Force -Path $experts | Out-Null
+          Copy-Item $built (Join-Path $experts 'GoldFastEA.ex5') -Force
+          Write-Host "EA compiled and installed."
+
+      - name: Run MT5 terminal
+        shell: powershell
+        run: |
+          Write-Host "Native MQL5 EA installed. MT5 terminal remains active for the runner session."
+          while ($true) { Start-Sleep -Seconds 60 }
+
+      - name: Upload EA source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: deriv-mt5-gold-log-${{ github.run_id }}
-          path: deriv_mt5_gold.log
-          if-no-files-found: warn
+          name: deriv-gold-ea-${{ github.run_id }}
+          path: GoldFastEA.mq5
+          if-no-files-found: error
