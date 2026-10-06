@@ -6,8 +6,23 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - name: Confirm workflow
+      - uses: actions/checkout@v4
+
+      - name: Check Gold EA
         shell: powershell
         run: |
-          Write-Host "Gold EA workflow is visible and ready."
+          Write-Host "GoldFastEA source found:"
+          Get-Item "$env:GITHUB_WORKSPACE\GoldFastEA.mq5" | Format-List FullName,Length
+
+          $text = Get-Content "$env:GITHUB_WORKSPACE\GoldFastEA.mq5" -Raw
+          if ($text -notmatch 'GOLD EA READY') {
+            throw "GoldFastEA.mq5 does not contain the expected GOLD EA code."
+          }
+
+          Write-Host "Gold EA source is ready."
+          Write-Host "Target: XAUUSD"
+          Write-Host "Lot: 0.01"
+          Write-Host "Profit target: 0.10"
+          Write-Host "Max loss: 10.0"
