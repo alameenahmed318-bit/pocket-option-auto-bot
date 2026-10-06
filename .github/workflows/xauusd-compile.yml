@@ -9,36 +9,63 @@ on:
 
 jobs:
   compile:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Prepare compiler folders
+      - name: Download official MetaTrader 5 installer
+        shell: powershell
         run: |
-          mkdir -p mql5/Experts mql5/Include
-          test -s mql5/Experts/XAUUSD_FastScalper.mq5
-          echo "=== SOURCE ==="
-          ls -lah mql5/Experts
-          wc -l mql5/Experts/XAUUSD_FastScalper.mq5
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\mt5setup.exe"
+          if (!(Test-Path "$env:RUNNER_TEMP\mt5setup.exe")) { throw 'MT5 installer was not downloaded.' }
 
-      - name: Compile with official MT5 Docker compiler
+      - name: Install MetaTrader 5
+        shell: powershell
         run: |
-          docker pull hudsonventura/mt5:2.2
-          docker run --rm             -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts"             -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro"             hudsonventura/mt5:2.2 /build.sh
+          $ErrorActionPreference = 'Stop'
+          $install = 'C:\MT5Build'
+          if (Test-Path $install) { Remove-Item $install -Recurse -Force }
+          Start-Process -FilePath "$env:RUNNER_TEMP\mt5setup.exe" -ArgumentList '/auto',('/path:"' + $install + '"') -Wait -NoNewWindow
+          $meta = Get-ChildItem -Path $install -Filter 'metaeditor64.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (!$meta) { throw "metaeditor64.exe was not found under $install" }
+          "METAEDITOR=$($meta.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MT5ROOT=$install" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "MetaEditor: $($meta.FullName)"
 
-      - name: Verify EX5
+      - name: Prepare MQL5 source
+        shell: powershell
         run: |
-          echo "=== BUILD OUTPUT ==="
-          find mql5/Experts -maxdepth 2 -type f -printf '%p %s bytes\n'
-          test -s mql5/Experts/XAUUSD_FastScalper.ex5
-          file mql5/Experts/XAUUSD_FastScalper.ex5
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:GITHUB_WORKSPACE 'mql5\Experts\XAUUSD_FastScalper.mq5'
+          if (!(Test-Path $source)) { throw "Source not found: $source" }
+          $mql = Join-Path $env:MT5ROOT 'MQL5'
+          New-Item -ItemType Directory -Force -Path (Join-Path $mql 'Experts') | Out-Null
+          Copy-Item $source (Join-Path $mql 'Experts\XAUUSD_FastScalper.mq5') -Force
+
+      - name: Compile with official MetaEditor
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Join-Path $env:MT5ROOT 'MQL5\Experts\XAUUSD_FastScalper.mq5'
+          & $env:METAEDITOR /compile:"$source" /log
+          $log = [System.IO.Path]::ChangeExtension($source, '.log')
+          if (Test-Path $log) { Get-Content $log -ErrorAction SilentlyContinue }
+          $ex5 = Join-Path $env:MT5ROOT 'MQL5\Experts\XAUUSD_FastScalper.ex5'
+          if (!(Test-Path $ex5)) { throw "EX5 was not created: $ex5" }
+          if ((Get-Item $ex5).Length -le 0) { throw 'EX5 file is empty.' }
+          Write-Host "EX5 READY: $ex5"
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'build') | Out-Null
+          Copy-Item $ex5 (Join-Path $env:GITHUB_WORKSPACE 'build\XAUUSD_FastScalper.ex5') -Force
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
         with:
           name: XAUUSD_FastScalper_EX5
-          path: mql5/Experts/XAUUSD_FastScalper.ex5
+          path: build/XAUUSD_FastScalper.ex5
           if-no-files-found: error
