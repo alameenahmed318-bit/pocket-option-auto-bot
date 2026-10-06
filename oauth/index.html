@@ -1,26 +1,56 @@
 <!doctype html>
 <html lang="en"><meta charset="utf-8"><title>GoldBot2026 — Deriv Login</title>
 <body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:20px">
-<h2>GoldBot2026</h2><p>Connect your Deriv account securely with OAuth 2.0 + PKCE.</p>
-<button id="login" style="padding:12px 18px">Connect Deriv</button><p id="status"></p>
+<h2>GoldBot2026</h2>
+<p>Connect your Deriv account securely with OAuth 2.0 + PKCE.</p>
+<button id="login" style="padding:12px 18px">Connect Deriv</button>
+<p id="status"></p>
 <script>
-const CLIENT_ID="34B9I7nOjWmQkh09P5LHx";
-const REDIRECT_URI="https://alameenahmed318-bit.github.io/pocket-option-auto-bot/oauth/callback";
-function b64url(bytes){return btoa(String.fromCharCode(...bytes)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
-async function start(){
- const bytes=crypto.getRandomValues(new Uint8Array(64));
- const verifier=b64url(bytes);
- const hash=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier));
- const challenge=b64url(new Uint8Array(hash));
- const state=b64url(crypto.getRandomValues(new Uint8Array(24)));
- sessionStorage.setItem("deriv_code_verifier",verifier);
- sessionStorage.setItem("deriv_oauth_state",state);
- const u=new URL("https://auth.deriv.com/oauth2/auth");
- u.searchParams.set("response_type","code");u.searchParams.set("client_id",CLIENT_ID);
- u.searchParams.set("redirect_uri",REDIRECT_URI);u.searchParams.set("scope","trade");
- u.searchParams.set("state",state);u.searchParams.set("code_challenge",challenge);
- u.searchParams.set("code_challenge_method","S256");
- location.href=u.toString();
+const CLIENT_ID = "34B9I7nOjWmQkh09P5LHx";
+const REDIRECT_URI = "https://alameenahmed318-bit.github.io/pocket-option-auto-bot/oauth/callback";
+const AUTH_ENDPOINT = "https://auth.deriv.com/oauth2/auth";
+
+function base64Url(bytes) {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
-document.getElementById("login").onclick=start;
-</script></body></html>
+
+async function start() {
+  const status = document.getElementById("status");
+  try {
+    // Deriv requires a fresh 43–128 character verifier and fresh state per request.
+    const verifierBytes = crypto.getRandomValues(new Uint8Array(64));
+    const codeVerifier = base64Url(verifierBytes);
+
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(codeVerifier)
+    );
+    const codeChallenge = base64Url(new Uint8Array(digest));
+
+    const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
+
+    sessionStorage.setItem("deriv_code_verifier", codeVerifier);
+    sessionStorage.setItem("deriv_oauth_state", state);
+
+    const url = new URL(AUTH_ENDPOINT);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("client_id", CLIENT_ID);
+    url.searchParams.set("redirect_uri", REDIRECT_URI);
+    url.searchParams.set("scope", "trade");
+    url.searchParams.set("state", state);
+    url.searchParams.set("code_challenge", codeChallenge);
+    url.searchParams.set("code_challenge_method", "S256");
+
+    status.textContent = "Opening Deriv authorization…";
+    window.location.assign(url.toString());
+  } catch (err) {
+    status.textContent = "OAuth setup error: " + err.message;
+  }
+}
+
+document.getElementById("login").addEventListener("click", start);
+</script>
+</body></html>
