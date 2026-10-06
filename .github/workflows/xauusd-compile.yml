@@ -53,15 +53,47 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $source = Join-Path $env:MT5ROOT 'MQL5\Experts\XAUUSD_FastScalper.mq5'
-          & $env:METAEDITOR /compile:"$source" /log
+          $work = $env:MT5ROOT
           $log = [System.IO.Path]::ChangeExtension($source, '.log')
-          if (Test-Path $log) { Get-Content $log -ErrorAction SilentlyContinue }
-          $ex5 = Join-Path $env:MT5ROOT 'MQL5\Experts\XAUUSD_FastScalper.ex5'
-          if (!(Test-Path $ex5)) { throw "EX5 was not created: $ex5" }
-          if ((Get-Item $ex5).Length -le 0) { throw 'EX5 file is empty.' }
-          Write-Host "EX5 READY: $ex5"
+          $ex5 = [System.IO.Path]::ChangeExtension($source, '.ex5')
+
+          Remove-Item $log,$ex5 -Force -ErrorAction SilentlyContinue
+
+          Write-Host "COMPILING: $source"
+          Write-Host "METAEDITOR: $env:METAEDITOR"
+
+          $args = @('/portable',("/compile:""$source"""),'/log',("/include:""$($env:MT5ROOT)\MQL5"""))
+          $p = Start-Process -FilePath $env:METAEDITOR -ArgumentList $args -WorkingDirectory $work -Wait -PassThru -NoNewWindow
+
+          Write-Host "MetaEditor exit code: $($p.ExitCode)"
+
+          if (Test-Path $log) {
+            Write-Host "===== METAEDITOR COMPILE LOG ====="
+            Get-Content $log -ErrorAction SilentlyContinue
+            Write-Host "===== END COMPILE LOG ====="
+          } else {
+            Write-Host "WARNING: source compile log was not created at $log"
+          }
+
+          Write-Host "Searching for generated EX5..."
+          $found = Get-ChildItem -Path $env:MT5ROOT -Filter 'XAUUSD_FastScalper.ex5' -Recurse -File -ErrorAction SilentlyContinue
+          if (!$found) {
+            Write-Host "No EX5 found. MetaEditor logs:"
+            Get-ChildItem -Path $env:MT5ROOT -Recurse -Filter '*.log' -File -ErrorAction SilentlyContinue |
+              ForEach-Object {
+                Write-Host "--- $($_.FullName) ---"
+                Get-Content $_.FullName -ErrorAction SilentlyContinue | Select-Object -Last 100
+              }
+            throw "EX5 was not created anywhere under $env:MT5ROOT"
+          }
+
+          $ex5 = $found | Select-Object -First 1
+          if ($ex5.Length -le 0) { throw "Generated EX5 is empty: $($ex5.FullName)" }
+
+          Write-Host "EX5 READY: $($ex5.FullName) | size=$($ex5.Length) bytes"
+
           New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'build') | Out-Null
-          Copy-Item $ex5 (Join-Path $env:GITHUB_WORKSPACE 'build\XAUUSD_FastScalper.ex5') -Force
+          Copy-Item $ex5.FullName (Join-Path $env:GITHUB_WORKSPACE 'build\XAUUSD_FastScalper.ex5') -Force
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
