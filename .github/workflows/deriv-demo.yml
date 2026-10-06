@@ -112,7 +112,7 @@ jobs:
 
           Write-Host "MT5 terminal: $($terminal.FullName)"
           Write-Host "Starting portable MT5 with Deriv-Demo configuration..."
-          Start-Process -FilePath $terminal.FullName -ArgumentList "/portable /config:$configPath"
+          Start-Process -FilePath $terminal.FullName -ArgumentList "/portable /config:$configPath /login:32432112 /server:Deriv-Demo"
           Start-Sleep -Seconds 45
 
           $proc = Get-Process terminal64 -ErrorAction SilentlyContinue
