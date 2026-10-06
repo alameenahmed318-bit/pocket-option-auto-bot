@@ -1,0 +1,13 @@
+name: Gold EA Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Confirm workflow
+        shell: powershell
+        run: |
+          Write-Host "Gold EA workflow is visible and ready."
