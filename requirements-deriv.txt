@@ -1,2 +1,0 @@
-MetaTrader5>=5.0.45
-pandas>=2.2,<3
