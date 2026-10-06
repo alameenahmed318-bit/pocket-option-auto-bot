@@ -17,25 +17,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare MQL5 folders
+      - name: Prepare
         run: |
           mkdir -p mql5/Experts mql5/Include
+          cp mql5/Experts/XAUUSD_FastScalper.mq5 XAUUSD_FastScalper.mq5
 
-      - name: Compile MQ5 to EX5
+      - name: Compile with MetaTrader 5 Docker
         run: |
-          docker run --rm \
-  -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts" \
-  -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Experts" \
-  -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro" \
-  -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/Program Files/MetaTrader 5/MQL5/Include:ro" \
-  hudsonventura/mt5:2.2 /build.sh
+          docker pull hudsonventura/mt5:2.2
+          docker run --rm             -v "$GITHUB_WORKSPACE:/workspace"             -w /workspace             hudsonventura/mt5:2.2             bash -lc 'mkdir -p /home/headless/.wine/drive_c/MQL5/Experts /home/headless/.wine/drive_c/MQL5/Include && cp /workspace/mql5/Experts/XAUUSD_FastScalper.mq5 /home/headless/.wine/drive_c/MQL5/Experts/ && cp -r /workspace/mql5/Include/. /home/headless/.wine/drive_c/MQL5/Include/ 2>/dev/null || true; /build.sh'
 
-      - name: Verify EX5
+      - name: Locate compiled EX5
         run: |
-          find mql5 -type f -name '*.ex5' -print
-          EX5="$(find mql5 -type f -name '*.ex5' | head -n 1)"
+          find . -type f -name '*.ex5' -print
+          EX5="$(find . -type f -name 'XAUUSD_FastScalper.ex5' | head -n 1)"
+          if [ -z "$EX5" ]; then
+            EX5="$(find . -type f -name '*.ex5' | head -n 1)"
+          fi
           test -n "$EX5"
           cp "$EX5" mql5/Experts/XAUUSD_FastScalper.ex5
+          ls -lh mql5/Experts/XAUUSD_FastScalper.ex5
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
