@@ -16,50 +16,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare
+      - name: Prepare compiler folders
         run: |
-          mkdir -p mql5/Experts
+          mkdir -p mql5/Experts mql5/Include
+          test -s mql5/Experts/XAUUSD_FastScalper.mq5
           echo "=== SOURCE ==="
           ls -lah mql5/Experts
           wc -l mql5/Experts/XAUUSD_FastScalper.mq5
 
-      - name: Compile and export EX5
+      - name: Compile with official MT5 Docker compiler
         run: |
           docker pull hudsonventura/mt5:2.2
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts" \
-            hudsonventura/mt5:2.2 /bin/bash -lc '
-              /build.sh
-              echo "=== FIND EX5 INSIDE CONTAINER ==="
-              find /home/headless/.wine/drive_c -type f -name "*.ex5" -print 2>/dev/null || true
-              echo "=== FIND TRADE.MQH ==="
-              find /home/headless/.wine/drive_c -type f -iname "Trade.mqh" -print 2>/dev/null || true
-              echo "=== COPY EX5 TO MOUNT ==="
-              found=$(find /home/headless/.wine/drive_c -type f -name "XAUUSD_FastScalper.ex5" -print -quit 2>/dev/null || true)
-              if [ -n "$found" ]; then
-                cp "$found" /home/headless/.wine/drive_c/MQL5/Experts/XAUUSD_FastScalper.ex5
-                echo "EX5 COPIED: $found"
-              else
-                echo "EX5 NOT FOUND"
-              fi
-            '
-
-      - name: Diagnose compiler output
-        if: always()
-        run: |
-          echo "=== EXPERTS AFTER BUILD ==="
-          find mql5/Experts -maxdepth 2 -type f -printf '%p %s bytes\n' || true
-          echo "=== COMPILER LOG ==="
-          if [ -f mql5/Experts/.log ]; then
-            iconv -f UTF-16LE -t UTF-8 mql5/Experts/.log || cat mql5/Experts/.log
-          else
-            echo "No .log file found"
-          fi
-          echo "=== ALL EX5 ==="
-          find . -type f -name '*.ex5' -print || true
+          docker run --rm             -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts"             -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro"             hudsonventura/mt5:2.2 /build.sh
 
       - name: Verify EX5
         run: |
+          echo "=== BUILD OUTPUT ==="
+          find mql5/Experts -maxdepth 2 -type f -printf '%p %s bytes\n'
           test -s mql5/Experts/XAUUSD_FastScalper.ex5
           file mql5/Experts/XAUUSD_FastScalper.ex5
 
