@@ -76,7 +76,10 @@ jobs:
       - name: Launch MT5 with Gold chart
         shell: powershell
         run: |
-          Start-Process -FilePath $env:MT5_PATH -ArgumentList '/portable'
+          $terminal = Get-ChildItem $env:MT5_DIR -Recurse -Filter 'terminal64.exe' | Select-Object -First 1
+          if (-not $terminal) { throw "MT5 terminal64.exe was not found under $env:MT5_DIR" }
+          Write-Host "MT5 terminal: $($terminal.FullName)"
+          Start-Process -FilePath $terminal.FullName -ArgumentList '/portable'
           Start-Sleep -Seconds 30
           Write-Host "MT5 launched. GoldFastEA is installed in MQL5\Experts."
 
