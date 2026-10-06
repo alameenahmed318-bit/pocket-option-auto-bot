@@ -17,39 +17,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare
+      - name: Prepare folders
         run: |
           mkdir -p mql5/Experts mql5/Include
-          cp mql5/Experts/XAUUSD_FastScalper.mq5 XAUUSD_FastScalper.mq5
+          find mql5 -maxdepth 2 -type f -print
 
-      - name: Compile with MetaTrader 5 Docker
+      - name: Compile with MT5 Docker
         run: |
-          docker pull hudsonventura/mt5:2.2
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            hudsonventura/mt5:2.2 \
-            bash -lc '
-              mkdir -p /home/headless/.wine/drive_c/MQL5/Experts /home/headless/.wine/drive_c/MQL5/Include
-              cp /workspace/mql5/Experts/XAUUSD_FastScalper.mq5 /home/headless/.wine/drive_c/MQL5/Experts/
-              cp -r /workspace/mql5/Include/. /home/headless/.wine/drive_c/MQL5/Include/ 2>/dev/null || true
-              /build.sh
-              echo "=== FIND EX5 ==="
-              EX5="$(find /home/headless/.wine -type f -name "XAUUSD_FastScalper.ex5" | head -n 1)"
-              if [ -z "$EX5" ]; then
-                EX5="$(find /home/headless -type f -name "*.ex5" | head -n 1)"
-              fi
-              if [ -z "$EX5" ]; then
-                echo "ERROR: compiler produced no EX5"
-                exit 1
-              fi
-              echo "FOUND: $EX5"
-              cp "$EX5" /workspace/mql5/Experts/XAUUSD_FastScalper.ex5
-              ls -lh /workspace/mql5/Experts/XAUUSD_FastScalper.ex5
-            '
+          docker pull hudsonventura/mt5:2.3
+          docker run --rm             -v "$GITHUB_WORKSPACE/mql5/Experts:/home/headless/.wine/drive_c/MQL5/Experts"             -v "$GITHUB_WORKSPACE/mql5/Include:/home/headless/.wine/drive_c/MQL5/Include:ro"             hudsonventura/mt5:2.3             /build.sh
 
-      - name: Verify EX5
+      - name: Verify compiled EX5
         run: |
+          echo "=== COMPILED FILES ==="
+          find mql5/Experts -maxdepth 1 -type f -print
           test -s mql5/Experts/XAUUSD_FastScalper.ex5
           file mql5/Experts/XAUUSD_FastScalper.ex5
           ls -lh mql5/Experts/XAUUSD_FastScalper.ex5
