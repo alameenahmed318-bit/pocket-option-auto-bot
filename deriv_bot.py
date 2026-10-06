@@ -14,20 +14,29 @@ def stop(x): log("ERROR | "+x); raise SystemExit(1)
 if not PASSWORD: stop("MT5_PASSWORD secret is missing.")
 if not MT5_PATH: stop("MT5_PATH environment variable is missing.")
 if not os.path.exists(MT5_PATH): stop(f"MT5 terminal not found: {MT5_PATH}")
+
+# The terminal is launched by the workflow. Attach to that existing portable
+# terminal first, without passing credentials to initialize(). Then authenticate
+# explicitly with mt5.login(). This avoids the Python API trying to spawn/attach
+# to a second terminal instance and timing out on IPC.
 mt5_ok=False
 for attempt in range(1,9):
     try: mt5.shutdown()
     except Exception: pass
-    log(f"MT5 initialize attempt {attempt}/8 | portable=True")
-    if mt5.initialize(path=MT5_PATH,login=LOGIN,password=PASSWORD,server=SERVER,timeout=180000,portable=True):
-        mt5_ok=True
-        break
-    err=mt5.last_error()
-    log(f"MT5 initialize failed {attempt}/8 | err={err}")
+    log(f"MT5 attach attempt {attempt}/8 | existing_terminal=True | portable=True")
+    if mt5.initialize(path=MT5_PATH, timeout=180000, portable=True):
+        log("MT5 IPC ATTACHED | now logging in explicitly")
+        if mt5.login(LOGIN, password=PASSWORD, server=SERVER):
+            mt5_ok=True
+            break
+        log(f"MT5 login failed {attempt}/8 | err={mt5.last_error()}")
+    else:
+        log(f"MT5 initialize failed {attempt}/8 | err={mt5.last_error()}")
     try: mt5.shutdown()
     except Exception: pass
     time.sleep(10)
-if not mt5_ok: stop(f"MT5 initialize failed after 8 attempts: {mt5.last_error()}")
+if not mt5_ok: stop(f"MT5 attach/login failed after 8 attempts: {mt5.last_error()}")
+
 a=mt5.account_info()
 if a is None: stop(f"account_info failed: {mt5.last_error()}")
 log(f"CONNECTED | login={a.login} | server={a.server} | balance={a.balance:.2f} | equity={a.equity:.2f} | currency={a.currency}")
