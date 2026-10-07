@@ -1,334 +1,362 @@
 //+------------------------------------------------------------------+
 //| XAUUSD_FastScalper.mq5                                           |
-//| GOLD ONLY - Fast Small-Profit Scalper                            |
+//| GOLD ONLY - Etrink/MT5 compatible standalone EA                  |
 //+------------------------------------------------------------------+
 #property strict
-#property version "1.05"
+#property version "2.00"
 
-input double LotSize=0.01;
-input int FastEMA=9;
-input int SlowEMA=21;
-input int RSIPeriod=7;
-input double BuyRSIMin=50.5;
-input double SellRSIMax=49.5;
-input int ATRPeriod=14;
-input double SL_ATR_Mult=1.5;
-input double Trail_ATR_Mult=0.8;
-input double ProfitTargetMoney=0.10;
-input double MaxLossMoney=10.0;
-input int MaxPositions=10;
-input int CooldownSeconds=2;
-input ulong MagicNumber=26100601;
+#include <Trade/Trade.mqh>
+CTrade trade;
 
-int hFast=INVALID_HANDLE,hSlow=INVALID_HANDLE,hRSI=INVALID_HANDLE,hATR=INVALID_HANDLE;
-datetime lastEntryTime=0;
+input double LotSize            = 0.01;
+input int    FastEMA            = 9;
+input int    SlowEMA            = 21;
+input int    RSIPeriod          = 7;
+input double BuyRSIMin          = 50.5;
+input double SellRSIMax         = 49.5;
+input int    ATRPeriod          = 14;
+input double SL_ATR_Mult        = 1.5;
+input double Trail_ATR_Mult     = 0.8;
+input double ProfitTargetMoney  = 0.10;
+input double MaxLossMoney       = 10.0;
+input int    MaxPositions       = 10;
+input int    CooldownSeconds    = 2;
+input ulong  MagicNumber        = 26100601;
 
-bool IsGoldSymbol()
+int hFast = INVALID_HANDLE;
+int hSlow = INVALID_HANDLE;
+int hRSI  = INVALID_HANDLE;
+int hATR  = INVALID_HANDLE;
+datetime lastEntryTime = 0;
+
+bool IsExactGold()
 {
-   string s=_Symbol;
-   StringToUpper(s);
-   return(StringFind(s,"XAU")>=0 || StringFind(s,"GOLD")>=0);
-}
-
-ENUM_ORDER_TYPE_FILLING GetFilling(const string symbol)
-{
-   long mode=SymbolInfoInteger(symbol,SYMBOL_FILLING_MODE);
-   if((mode&SYMBOL_FILLING_FOK)==SYMBOL_FILLING_FOK) return ORDER_FILLING_FOK;
-   if((mode&SYMBOL_FILLING_IOC)==SYMBOL_FILLING_IOC) return ORDER_FILLING_IOC;
-   return ORDER_FILLING_RETURN;
+   return (_Symbol == "XAUUSD");
 }
 
 double NormalizeVolume(double volume)
 {
-   double minVol=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
-   double maxVol=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
-   double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
-   if(step<=0) step=minVol;
-   if(step<=0) return 0.0;
-   volume=MathMax(minVol,MathMin(maxVol,volume));
-   volume=MathFloor((volume+1e-12)/step)*step;
-   int vd=0;
-   if(step<1.0) vd=(int)MathCeil(-MathLog10(step));
-   return NormalizeDouble(volume,vd);
+   double minVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxVol = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   if(minVol <= 0 || maxVol <= 0 || step <= 0)
+      return 0.0;
+
+   volume = MathMax(minVol, MathMin(maxVol, volume));
+
+   double steps = MathFloor((volume - minVol + 1e-12) / step);
+   double result = minVol + steps * step;
+
+   if(result < minVol) result = minVol;
+   if(result > maxVol) result = maxVol;
+
+   return NormalizeDouble(result, 8);
 }
 
-bool IsValidStop(ENUM_ORDER_TYPE type,double sl,double price)
+double NormalizePrice(double price)
 {
-   if(sl<=0) return true;
-   long stopsLevel=SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL);
-   double point=SymbolInfoDouble(_Symbol,SYMBOL_POINT);
-   double minDistance=(double)stopsLevel*point;
-   if(minDistance<=0) return true;
-   if(type==ORDER_TYPE_BUY) return (price-sl)>=minDistance;
-   return (sl-price)>=minDistance;
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+
+   if(tickSize > 0)
+      price = MathRound(price / tickSize) * tickSize;
+
+   return NormalizeDouble(price, digits);
 }
 
-bool SendDeal(ENUM_ORDER_TYPE type,double volume,double sl,string comment)
+bool ValidSL(ENUM_ORDER_TYPE type, double sl, double price)
 {
-   volume=NormalizeVolume(volume);
-   if(volume<=0)
-   {
-      Print("TRADE_REJECT | invalid volume | requested=",LotSize);
-      return false;
-   }
+   if(sl <= 0) return true;
 
-   MqlTradeRequest req={};
-   MqlTradeResult res={};
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   long stops  = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
 
-   double price=(type==ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol,SYMBOL_ASK)
-                                       : SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
+   if(point <= 0 || stops <= 0) return true;
 
-   req.action=TRADE_ACTION_DEAL;
-   req.symbol=_Symbol;
-   req.volume=volume;
-   req.type=type;
-   req.price=NormalizeDouble(price,digits);
-   req.sl=(sl>0 ? NormalizeDouble(sl,digits) : 0.0);
-   req.tp=0.0;
-   req.deviation=30;
-   req.magic=MagicNumber;
-   req.type_filling=GetFilling(_Symbol);
-   req.comment=comment;
+   double minDistance = stops * point;
 
-   if(!IsValidStop(type,req.sl,req.price))
-   {
-      Print("TRADE_REJECT | invalid SL distance | price=",req.price," | sl=",req.sl);
-      req.sl=0.0;
-   }
+   if(type == ORDER_TYPE_BUY)
+      return ((price - sl) >= minDistance);
 
-   ResetLastError();
-   if(!OrderSend(req,res))
-   {
-      Print("TRADE_ERROR | OrderSend failed | err=",GetLastError(),
-            " | retcode=",res.retcode," | comment=",res.comment);
-      return false;
-   }
-
-   Print("TRADE_RESULT | retcode=",res.retcode,
-         " | order=",res.order," | deal=",res.deal,
-         " | volume=",res.volume," | comment=",res.comment);
-
-   return(res.retcode==TRADE_RETCODE_DONE ||
-          res.retcode==TRADE_RETCODE_DONE_PARTIAL ||
-          res.retcode==TRADE_RETCODE_PLACED);
-}
-
-bool ClosePosition(ulong ticket)
-{
-   if(!PositionSelectByTicket(ticket)) return false;
-
-   string symbol=PositionGetString(POSITION_SYMBOL);
-   double volume=PositionGetDouble(POSITION_VOLUME);
-   long ptype=PositionGetInteger(POSITION_TYPE);
-
-   MqlTradeRequest req={};
-   MqlTradeResult res={};
-
-   req.action=TRADE_ACTION_DEAL;
-   req.position=ticket;
-   req.symbol=symbol;
-   req.volume=volume;
-   req.type=(ptype==POSITION_TYPE_BUY)?ORDER_TYPE_SELL:ORDER_TYPE_BUY;
-   req.price=(req.type==ORDER_TYPE_BUY)?SymbolInfoDouble(symbol,SYMBOL_ASK)
-                                      :SymbolInfoDouble(symbol,SYMBOL_BID);
-   req.deviation=30;
-   req.magic=MagicNumber;
-   req.type_filling=GetFilling(symbol);
-   req.comment="XAU Fast Close";
-
-   ResetLastError();
-   if(!OrderSend(req,res))
-   {
-      Print("CLOSE_ERROR | ticket=",ticket," | err=",GetLastError(),
-            " | retcode=",res.retcode," | comment=",res.comment);
-      return false;
-   }
-
-   Print("CLOSE_RESULT | ticket=",ticket," | retcode=",res.retcode,
-         " | deal=",res.deal," | comment=",res.comment);
-
-   return(res.retcode==TRADE_RETCODE_DONE ||
-          res.retcode==TRADE_RETCODE_DONE_PARTIAL ||
-          res.retcode==TRADE_RETCODE_PLACED);
-}
-
-bool ModifySL(ulong ticket,double newSL)
-{
-   if(!PositionSelectByTicket(ticket)) return false;
-
-   string symbol=PositionGetString(POSITION_SYMBOL);
-   int digits=(int)SymbolInfoInteger(symbol,SYMBOL_DIGITS);
-   double point=SymbolInfoDouble(symbol,SYMBOL_POINT);
-   long stopsLevel=SymbolInfoInteger(symbol,SYMBOL_TRADE_STOPS_LEVEL);
-   long ptype=PositionGetInteger(POSITION_TYPE);
-
-   double bid=SymbolInfoDouble(symbol,SYMBOL_BID);
-   double ask=SymbolInfoDouble(symbol,SYMBOL_ASK);
-   double minDistance=(double)stopsLevel*point;
-   newSL=NormalizeDouble(newSL,digits);
-
-   if(ptype==POSITION_TYPE_BUY && minDistance>0 && (bid-newSL)<minDistance) return false;
-   if(ptype==POSITION_TYPE_SELL && minDistance>0 && (newSL-ask)<minDistance) return false;
-
-   MqlTradeRequest req={};
-   MqlTradeResult res={};
-   req.action=TRADE_ACTION_SLTP;
-   req.position=ticket;
-   req.symbol=symbol;
-   req.sl=newSL;
-   req.tp=PositionGetDouble(POSITION_TP);
-
-   ResetLastError();
-   if(!OrderSend(req,res))
-   {
-      Print("SL_ERROR | ticket=",ticket," | err=",GetLastError(),
-            " | retcode=",res.retcode," | comment=",res.comment);
-      return false;
-   }
-
-   if(res.retcode!=TRADE_RETCODE_DONE && res.retcode!=TRADE_RETCODE_PLACED)
-   {
-      Print("SL_REJECT | ticket=",ticket," | retcode=",res.retcode,
-            " | comment=",res.comment);
-      return false;
-   }
-   return true;
+   return ((sl - price) >= minDistance);
 }
 
 int CountMyPositions()
 {
-   int count=0;
-   for(int i=PositionsTotal()-1;i>=0;i--)
+   int count = 0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket==0 || !PositionSelectByTicket(ticket)) continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)==MagicNumber &&
-         PositionGetString(POSITION_SYMBOL)==_Symbol) count++;
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
+         PositionGetString(POSITION_SYMBOL) == _Symbol)
+      {
+         count++;
+      }
    }
+
    return count;
+}
+
+bool CloseMyPosition(ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetTypeFillingBySymbol(PositionGetString(POSITION_SYMBOL));
+
+   bool ok = trade.PositionClose(ticket, 30);
+
+   if(!ok)
+   {
+      Print("CLOSE_ERROR | ticket=", ticket,
+            " | retcode=", trade.ResultRetcode(),
+            " | comment=", trade.ResultRetcodeDescription());
+   }
+
+   return ok;
+}
+
+bool ModifyMySL(ulong ticket, double newSL)
+{
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   double tp = PositionGetDouble(POSITION_TP);
+   long type = PositionGetInteger(POSITION_TYPE);
+
+   double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   long stops = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+
+   if(point > 0 && stops > 0)
+   {
+      double minDistance = stops * point;
+
+      if(type == POSITION_TYPE_BUY && (bid - newSL) < minDistance)
+         return false;
+
+      if(type == POSITION_TYPE_SELL && (newSL - ask) < minDistance)
+         return false;
+   }
+
+   newSL = NormalizePrice(newSL);
+
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetTypeFillingBySymbol(symbol);
+
+   if(!trade.PositionModify(ticket, newSL, tp))
+   {
+      Print("SL_ERROR | ticket=", ticket,
+            " | retcode=", trade.ResultRetcode(),
+            " | comment=", trade.ResultRetcodeDescription());
+      return false;
+   }
+
+   return true;
+}
+
+bool OpenTrade(ENUM_ORDER_TYPE type, double volume, double sl, string comment)
+{
+   volume = NormalizeVolume(volume);
+
+   if(volume <= 0)
+   {
+      Print("TRADE_REJECT | invalid volume | requested=", LotSize);
+      return false;
+   }
+
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetDeviationInPoints(30);
+   trade.SetTypeFillingBySymbol(_Symbol);
+
+   sl = NormalizePrice(sl);
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double price = (type == ORDER_TYPE_BUY) ? ask : bid;
+
+   if(!ValidSL(type, sl, price))
+   {
+      Print("SL_ADJUST | broker stop distance rejected requested SL; sending without initial SL");
+      sl = 0.0;
+   }
+
+   bool ok = false;
+
+   if(type == ORDER_TYPE_BUY)
+      ok = trade.Buy(volume, _Symbol, 0.0, sl, 0.0, comment);
+   else
+      ok = trade.Sell(volume, _Symbol, 0.0, sl, 0.0, comment);
+
+   Print("TRADE_RESULT | ok=", ok,
+         " | retcode=", trade.ResultRetcode(),
+         " | comment=", trade.ResultRetcodeDescription(),
+         " | deal=", trade.ResultDeal(),
+         " | order=", trade.ResultOrder(),
+         " | volume=", volume);
+
+   return ok;
 }
 
 void ManagePositions()
 {
    double atr[];
-   ArraySetAsSeries(atr,true);
-   if(CopyBuffer(hATR,0,0,1,atr)<1 || atr[0]<=0) return;
+   ArraySetAsSeries(atr, true);
 
-   int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
-   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
+   if(CopyBuffer(hATR, 0, 0, 1, atr) < 1 || atr[0] <= 0)
+      return;
 
-   for(int i=PositionsTotal()-1;i>=0;i--)
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      ulong ticket=PositionGetTicket(i);
-      if(ticket==0 || !PositionSelectByTicket(ticket)) continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MagicNumber ||
-         PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
 
-      double profit=PositionGetDouble(POSITION_PROFIT);
-      long type=PositionGetInteger(POSITION_TYPE);
-      double sl=PositionGetDouble(POSITION_SL);
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != MagicNumber ||
+         PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
 
-      if(profit>=ProfitTargetMoney)
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      long type = PositionGetInteger(POSITION_TYPE);
+      double oldSL = PositionGetDouble(POSITION_SL);
+
+      if(profit >= ProfitTargetMoney)
       {
-         ClosePosition(ticket);
+         CloseMyPosition(ticket);
          continue;
       }
 
-      if(profit<=-MaxLossMoney)
+      if(profit <= -MaxLossMoney)
       {
-         ClosePosition(ticket);
+         CloseMyPosition(ticket);
          continue;
       }
 
-      double newSL=sl;
-      if(type==POSITION_TYPE_BUY)
+      double newSL = oldSL;
+
+      if(type == POSITION_TYPE_BUY)
       {
-         double c=NormalizeDouble(bid-atr[0]*Trail_ATR_Mult,digits);
-         if(c>0 && c<bid && (sl==0 || c>sl)) newSL=c;
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double candidate = NormalizePrice(bid - atr[0] * Trail_ATR_Mult);
+
+         if(candidate > 0 && candidate < bid &&
+            (oldSL == 0 || candidate > oldSL))
+         {
+            newSL = candidate;
+         }
       }
-      else if(type==POSITION_TYPE_SELL)
+      else if(type == POSITION_TYPE_SELL)
       {
-         double c=NormalizeDouble(ask+atr[0]*Trail_ATR_Mult,digits);
-         if(c>ask && (sl==0 || c<sl)) newSL=c;
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double candidate = NormalizePrice(ask + atr[0] * Trail_ATR_Mult);
+
+         if(candidate > ask &&
+            (oldSL == 0 || candidate < oldSL))
+         {
+            newSL = candidate;
+         }
       }
 
-      if(newSL!=sl && newSL>0) ModifySL(ticket,newSL);
+      if(newSL > 0 && newSL != oldSL)
+         ModifyMySL(ticket, newSL);
    }
 }
 
 void OnTick()
 {
-   if(!IsGoldSymbol()) return;
+   if(!IsExactGold())
+      return;
 
    ManagePositions();
 
-   if(CountMyPositions()>=MaxPositions) return;
-   if((TimeCurrent()-lastEntryTime)<CooldownSeconds) return;
+   if(CountMyPositions() >= MaxPositions)
+      return;
 
-   double fast[],slow[],rsi[],atr[];
-   ArraySetAsSeries(fast,true);
-   ArraySetAsSeries(slow,true);
-   ArraySetAsSeries(rsi,true);
-   ArraySetAsSeries(atr,true);
+   if((TimeCurrent() - lastEntryTime) < CooldownSeconds)
+      return;
 
-   if(CopyBuffer(hFast,0,0,2,fast)<2 ||
-      CopyBuffer(hSlow,0,0,2,slow)<2 ||
-      CopyBuffer(hRSI,0,0,2,rsi)<2 ||
-      CopyBuffer(hATR,0,0,2,atr)<2 || atr[0]<=0) return;
+   double fast[], slow[], rsi[], atr[];
+   ArraySetAsSeries(fast, true);
+   ArraySetAsSeries(slow, true);
+   ArraySetAsSeries(rsi, true);
+   ArraySetAsSeries(atr, true);
 
-   bool buySignal=(fast[0]>slow[0] && rsi[0]>=BuyRSIMin);
-   bool sellSignal=(fast[0]<slow[0] && rsi[0]<=SellRSIMax);
+   if(CopyBuffer(hFast, 0, 0, 2, fast) < 2 ||
+      CopyBuffer(hSlow, 0, 0, 2, slow) < 2 ||
+      CopyBuffer(hRSI, 0, 0, 2, rsi) < 2 ||
+      CopyBuffer(hATR, 0, 0, 2, atr) < 2)
+   {
+      return;
+   }
 
-   int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
-   double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   double d=atr[0]*SL_ATR_Mult;
+   if(atr[0] <= 0)
+      return;
+
+   bool buySignal  = (fast[0] > slow[0] && rsi[0] >= BuyRSIMin);
+   bool sellSignal = (fast[0] < slow[0] && rsi[0] <= SellRSIMax);
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double distance = atr[0] * SL_ATR_Mult;
 
    if(buySignal)
    {
-      double sl=NormalizeDouble(ask-d,digits);
-      if(SendDeal(ORDER_TYPE_BUY,LotSize,sl,"XAU Fast Buy"))
-         lastEntryTime=TimeCurrent();
+      double sl = NormalizePrice(ask - distance);
+
+      if(OpenTrade(ORDER_TYPE_BUY, LotSize, sl, "Etrink XAU Buy"))
+         lastEntryTime = TimeCurrent();
    }
    else if(sellSignal)
    {
-      double sl=NormalizeDouble(bid+d,digits);
-      if(SendDeal(ORDER_TYPE_SELL,LotSize,sl,"XAU Fast Sell"))
-         lastEntryTime=TimeCurrent();
+      double sl = NormalizePrice(bid + distance);
+
+      if(OpenTrade(ORDER_TYPE_SELL, LotSize, sl, "Etrink XAU Sell"))
+         lastEntryTime = TimeCurrent();
    }
 }
 
 int OnInit()
 {
-   if(!IsGoldSymbol())
+   if(!IsExactGold())
    {
-      Print("INIT_FAILED | GOLD ONLY | chart=",_Symbol);
+      Print("INIT_FAILED | XAUUSD ONLY | current symbol=", _Symbol);
       return INIT_FAILED;
    }
 
-   hFast=iMA(_Symbol,PERIOD_M1,FastEMA,0,MODE_EMA,PRICE_CLOSE);
-   hSlow=iMA(_Symbol,PERIOD_M1,SlowEMA,0,MODE_EMA,PRICE_CLOSE);
-   hRSI=iRSI(_Symbol,PERIOD_M1,RSIPeriod,PRICE_CLOSE);
-   hATR=iATR(_Symbol,PERIOD_M1,ATRPeriod);
+   hFast = iMA(_Symbol, PERIOD_M1, FastEMA, 0, MODE_EMA, PRICE_CLOSE);
+   hSlow = iMA(_Symbol, PERIOD_M1, SlowEMA, 0, MODE_EMA, PRICE_CLOSE);
+   hRSI  = iRSI(_Symbol, PERIOD_M1, RSIPeriod, PRICE_CLOSE);
+   hATR  = iATR(_Symbol, PERIOD_M1, ATRPeriod);
 
-   if(hFast==INVALID_HANDLE || hSlow==INVALID_HANDLE ||
-      hRSI==INVALID_HANDLE || hATR==INVALID_HANDLE)
+   if(hFast == INVALID_HANDLE ||
+      hSlow == INVALID_HANDLE ||
+      hRSI  == INVALID_HANDLE ||
+      hATR  == INVALID_HANDLE)
    {
-      Print("INIT_FAILED | indicator handle error | fast=",hFast,
-            " slow=",hSlow," rsi=",hRSI," atr=",hATR);
+      Print("INIT_FAILED | indicator handle error | fast=", hFast,
+            " slow=", hSlow,
+            " rsi=", hRSI,
+            " atr=", hATR);
       return INIT_FAILED;
    }
 
-   Print("XAUUSD_FastScalper v1.05 READY | GOLD ONLY | M1 | Lot=0.01 | Target=0.10 | MaxLoss=10 | Cooldown=2s");
+   Print("XAUUSD_FastScalper v2.00 READY | XAUUSD ONLY | M1 | Lot=0.01 | Target=0.10 | MaxLoss=10 | MaxPositions=10");
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
-   if(hFast!=INVALID_HANDLE) IndicatorRelease(hFast);
-   if(hSlow!=INVALID_HANDLE) IndicatorRelease(hSlow);
-   if(hRSI!=INVALID_HANDLE) IndicatorRelease(hRSI);
-   if(hATR!=INVALID_HANDLE) IndicatorRelease(hATR);
+   if(hFast != INVALID_HANDLE) IndicatorRelease(hFast);
+   if(hSlow != INVALID_HANDLE) IndicatorRelease(hSlow);
+   if(hRSI  != INVALID_HANDLE) IndicatorRelease(hRSI);
+   if(hATR  != INVALID_HANDLE) IndicatorRelease(hATR);
 }
+//+------------------------------------------------------------------+
