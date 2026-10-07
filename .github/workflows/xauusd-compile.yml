@@ -62,8 +62,9 @@ jobs:
           Write-Host "COMPILING: $source"
           Write-Host "METAEDITOR: $env:METAEDITOR"
 
-          $args = @('/portable',("/compile:""$source"""),'/log',("/include:""$($env:MT5ROOT)\MQL5"""))
-          $p = Start-Process -FilePath $env:METAEDITOR -ArgumentList $args -WorkingDirectory $work -Wait -PassThru -NoNewWindow
+          $argLine = '/portable /compile:"' + $source + '" /log'
+          Write-Host "MetaEditor arguments: $argLine"
+          $p = Start-Process -FilePath $env:METAEDITOR -ArgumentList $argLine -WorkingDirectory $work -Wait -PassThru -NoNewWindow
 
           Write-Host "MetaEditor exit code: $($p.ExitCode)"
 
