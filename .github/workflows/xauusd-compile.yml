@@ -46,13 +46,13 @@ jobs:
           if (!(Test-Path $source)) { throw "Source not found: $source" }
           $mql = Join-Path $env:MT5ROOT 'MQL5'
           New-Item -ItemType Directory -Force -Path (Join-Path $mql 'Experts') | Out-Null
-          Copy-Item $source (Join-Path $mql 'Experts\XAUUSD_FastScalper.mq5') -Force
+          Copy-Item $source (Join-Path $mql 'Experts\AL_ZOL.mq5') -Force
 
       - name: Compile with official MetaEditor
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $source = Join-Path $env:MT5ROOT 'MQL5\Experts\XAUUSD_FastScalper.mq5'
+          $source = Join-Path $env:MT5ROOT 'MQL5\Experts\AL_ZOL.mq5'
           $work = $env:MT5ROOT
           $log = [System.IO.Path]::ChangeExtension($source, '.log')
           $ex5 = [System.IO.Path]::ChangeExtension($source, '.ex5')
@@ -94,11 +94,11 @@ jobs:
           Write-Host "EX5 READY: $($ex5.FullName) | size=$($ex5.Length) bytes"
 
           New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'build') | Out-Null
-          Copy-Item $ex5.FullName (Join-Path $env:GITHUB_WORKSPACE 'build\XAUUSD_FastScalper.ex5') -Force
+          Copy-Item $ex5.FullName (Join-Path $env:GITHUB_WORKSPACE 'build\AL_ZOL.ex5') -Force
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
         with:
           name: AL_ZOL_EX5
-          path: build/XAUUSD_FastScalper.ex5
+          path: build/AL_ZOL.ex5
           if-no-files-found: error
