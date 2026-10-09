@@ -1,10 +1,10 @@
-name: Compile AL ZOL Gold Scalper
+name: Compile Sniper ZOL M1 Scalper EX5
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - 'mql5/Experts/XAUUSD_FastScalper.mq5'
+      - 'mql5/Experts/Sniper_ZOL_M1_Scalper.mq5'
       - '.github/workflows/xauusd-compile.yml'
 
 jobs:
@@ -42,63 +42,48 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $source = Join-Path $env:GITHUB_WORKSPACE 'mql5\Experts\XAUUSD_FastScalper.mq5'
+          $source = Join-Path $env:GITHUB_WORKSPACE 'mql5\Experts\Sniper_ZOL_M1_Scalper.mq5'
           if (!(Test-Path $source)) { throw "Source not found: $source" }
           $mql = Join-Path $env:MT5ROOT 'MQL5'
           New-Item -ItemType Directory -Force -Path (Join-Path $mql 'Experts') | Out-Null
-          Copy-Item $source (Join-Path $mql 'Experts\AL_ZOL.mq5') -Force
+          Copy-Item $source (Join-Path $mql 'Experts\Sniper_ZOL_M1_Scalper.mq5') -Force
 
       - name: Compile with official MetaEditor
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $source = Join-Path $env:MT5ROOT 'MQL5\Experts\AL_ZOL.mq5'
+          $source = Join-Path $env:MT5ROOT 'MQL5\Experts\Sniper_ZOL_M1_Scalper.mq5'
           $work = $env:MT5ROOT
           $log = [System.IO.Path]::ChangeExtension($source, '.log')
           $ex5 = [System.IO.Path]::ChangeExtension($source, '.ex5')
-
           Remove-Item $log,$ex5 -Force -ErrorAction SilentlyContinue
-
           Write-Host "COMPILING: $source"
           Write-Host "METAEDITOR: $env:METAEDITOR"
-
           $argLine = '/portable /compile:"' + $source + '" /log'
-          Write-Host "MetaEditor arguments: $argLine"
           $p = Start-Process -FilePath $env:METAEDITOR -ArgumentList $argLine -WorkingDirectory $work -Wait -PassThru -NoNewWindow
-
           Write-Host "MetaEditor exit code: $($p.ExitCode)"
-
           if (Test-Path $log) {
             Write-Host "===== METAEDITOR COMPILE LOG ====="
             Get-Content $log -ErrorAction SilentlyContinue
             Write-Host "===== END COMPILE LOG ====="
-          } else {
-            Write-Host "WARNING: source compile log was not created at $log"
           }
-
-          Write-Host "Searching for generated EX5..."
-          $found = Get-ChildItem -Path $env:MT5ROOT -Filter 'AL_ZOL.ex5' -Recurse -File -ErrorAction SilentlyContinue
-          if (!$found) {
-            Write-Host "No EX5 found. MetaEditor logs:"
+          if (!(Test-Path $ex5)) {
+            Write-Host "EX5 not found. Searching compiler logs..."
             Get-ChildItem -Path $env:MT5ROOT -Recurse -Filter '*.log' -File -ErrorAction SilentlyContinue |
               ForEach-Object {
                 Write-Host "--- $($_.FullName) ---"
                 Get-Content $_.FullName -ErrorAction SilentlyContinue | Select-Object -Last 100
               }
-            throw "EX5 was not created anywhere under $env:MT5ROOT"
+            throw "Compilation failed: EX5 was not created."
           }
-
-          $ex5 = $found | Select-Object -First 1
-          if ($ex5.Length -le 0) { throw "Generated EX5 is empty: $($ex5.FullName)" }
-
-          Write-Host "EX5 READY: $($ex5.FullName) | size=$($ex5.Length) bytes"
-
+          if ((Get-Item $ex5).Length -le 0) { throw "Generated EX5 is empty." }
           New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'build') | Out-Null
-          Copy-Item $ex5.FullName (Join-Path $env:GITHUB_WORKSPACE 'build\AL_ZOL.ex5') -Force
+          Copy-Item $ex5 (Join-Path $env:GITHUB_WORKSPACE 'build\Sniper_ZOL_M1_Scalper.ex5') -Force
+          Write-Host "EX5 READY: build\Sniper_ZOL_M1_Scalper.ex5"
 
       - name: Upload EX5
         uses: actions/upload-artifact@v4
         with:
-          name: AL_ZOL_EX5
-          path: build/AL_ZOL.ex5
+          name: Sniper_ZOL_M1_Scalper_EX5
+          path: build/Sniper_ZOL_M1_Scalper.ex5
           if-no-files-found: error
