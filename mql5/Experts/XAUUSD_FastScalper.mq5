@@ -1,36 +1,40 @@
 //+------------------------------------------------------------------+
-//| AL_ZOL.mq5 - XAUUSD breakout/retest strategy                     |
+//| AL_ZOL.mq5 - Fast M1 gold scalper                                 |
 //+------------------------------------------------------------------+
 #property strict
-#property version "4.00"
-#property description "AL ZOL - XAUUSD breakout/retest with M5 trend confirmation"
+#property version   "5.00"
+#property description "AL ZOL M1 quick scalper: EMA momentum + RSI + M5 trend, no grid"
 
 input double LotSize=0.01;
 input ulong MagicNumber=26100601;
-input int BreakoutLookback=12;
-input int TrendFastEMA=50;
-input int TrendSlowEMA=200;
+input int EntryFastEMA=5;
+input int EntrySlowEMA=13;
+input int TrendFastEMA=20;
+input int TrendSlowEMA=50;
+input int RSIPeriod=7;
+input double BuyRSILevel=53.0;
+input double SellRSILevel=47.0;
 input int ATRPeriod=14;
-input double RetestATRAllowance=0.20;
-input double StopATRMultiplier=1.50;
-input double RewardRisk=1.30;
-input double TrailStartR=0.80;
-input double TrailATRMultiplier=1.00;
+input double TakeProfitATR=0.45;
+input double StopLossATR=1.00;
+input double MinTargetSpreadMultiple=2.5;
 input int MaxSpreadPoints=80;
-input int MinATRPoints=30;
+input int MinATRPoints=20;
 input int MaxATRPoints=2500;
-input int CooldownSeconds=60;
+input int CooldownSeconds=8;
+input double ProfitTargetMoney=0.10;
 input double MaxLossMoney=10.0;
-input bool EnableBreakEven=true;
-input double BreakEvenAtR=0.70;
+input int MaxHoldMinutes=8;
+input bool UseM5TrendFilter=true;
 
-int hFast=INVALID_HANDLE,hSlow=INVALID_HANDLE,hATR=INVALID_HANDLE;
+int hEntryFast=INVALID_HANDLE,hEntrySlow=INVALID_HANDLE;
+int hTrendFast=INVALID_HANDLE,hTrendSlow=INVALID_HANDLE;
+int hRSI=INVALID_HANDLE,hATR=INVALID_HANDLE;
 datetime lastBarTime=0,lastEntryTime=0;
 
 bool IsGoldSymbol()
 {
-   string s=_Symbol;
-   return (StringFind(s,"XAUUSD")>=0 || StringFind(s,"GOLD")>=0);
+   return (StringFind(_Symbol,"XAUUSD")>=0 || StringFind(_Symbol,"GOLD")>=0);
 }
 double NPrice(double p)
 {
@@ -67,26 +71,96 @@ int MyPositions()
    }
    return n;
 }
-bool SendEntry(ENUM_ORDER_TYPE type,double atr)
+bool ClosePosition(ulong ticket,string why)
+{
+   if(!PositionSelectByTicket(ticket)) return false;
+   long side=PositionGetInteger(POSITION_TYPE);
+   MqlTradeRequest req={}; MqlTradeResult res={};
+   req.action=TRADE_ACTION_DEAL;
+   req.symbol=_Symbol;
+   req.position=ticket;
+   req.volume=PositionGetDouble(POSITION_VOLUME);
+   req.type=(side==POSITION_TYPE_BUY)?ORDER_TYPE_SELL:ORDER_TYPE_BUY;
+   req.price=(req.type==ORDER_TYPE_BUY)?SymbolInfoDouble(_Symbol,SYMBOL_ASK):SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   req.deviation=30;
+   req.magic=MagicNumber;
+   req.type_filling=FillMode();
+   req.comment=why;
+   bool sent=OrderSend(req,res);
+   Print("AL_ZOL CLOSE | reason=",why," sent=",sent," retcode=",res.retcode," ",res.comment);
+   return sent && (res.retcode==TRADE_RETCODE_DONE || res.retcode==TRADE_RETCODE_DONE_PARTIAL);
+}
+bool NewM1Bar()
+{
+   datetime t=iTime(_Symbol,PERIOD_M1,0);
+   if(t<=0 || t==lastBarTime) return false;
+   lastBarTime=t;
+   return true;
+}
+bool ReadValue(int handle,int shift,double &value)
+{
+   double b[]; ArraySetAsSeries(b,true);
+   if(CopyBuffer(handle,0,shift,1,b)<1) return false;
+   value=b[0];
+   return true;
+}
+void ManagePositions()
+{
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket=PositionGetTicket(i);
+      if(!ticket || !PositionSelectByTicket(ticket)) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MagicNumber ||
+         PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
+      double profit=PositionGetDouble(POSITION_PROFIT);
+      if(ProfitTargetMoney>0 && profit>=ProfitTargetMoney)
+      {
+         ClosePosition(ticket,"AL_ZOL small profit");
+         continue;
+      }
+      if(MaxLossMoney>0 && profit<=-MaxLossMoney)
+      {
+         ClosePosition(ticket,"AL_ZOL max loss");
+         continue;
+      }
+      if(MaxHoldMinutes>0)
+      {
+         datetime opened=(datetime)PositionGetInteger(POSITION_TIME);
+         if(TimeCurrent()-opened>=MaxHoldMinutes*60)
+         {
+            ClosePosition(ticket,"AL_ZOL time exit");
+            continue;
+         }
+      }
+   }
+}
+bool SendEntry(ENUM_ORDER_TYPE type,double atr,double spreadPrice)
 {
    double vol=NVolume(LotSize);
    if(vol<=0) return false;
-   double point=SymbolInfoDouble(_Symbol,SYMBOL_POINT);
    double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
    double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double price=(type==ORDER_TYPE_BUY)?ask:bid;
-   double risk=atr*StopATRMultiplier;
-   double sl=(type==ORDER_TYPE_BUY)?price-risk:price+risk;
-   double tp=(type==ORDER_TYPE_BUY)?price+risk*RewardRisk:price-risk*RewardRisk;
+   double stopDist=MathMax(atr*StopLossATR,spreadPrice*2.0);
+   double targetDist=MathMax(atr*TakeProfitATR,spreadPrice*MinTargetSpreadMultiple);
+   long stopLevel=SymbolInfoInteger(_Symbol,SYMBOL_TRADE_STOPS_LEVEL);
+   double point=SymbolInfoDouble(_Symbol,SYMBOL_POINT);
+   double minDist=(double)stopLevel*point;
+   stopDist=MathMax(stopDist,minDist+point);
+   targetDist=MathMax(targetDist,minDist+point);
+   double sl=(type==ORDER_TYPE_BUY)?price-stopDist:price+stopDist;
+   double tp=(type==ORDER_TYPE_BUY)?price+targetDist:price-targetDist;
    MqlTradeRequest req={}; MqlTradeResult res={};
    req.action=TRADE_ACTION_DEAL; req.symbol=_Symbol; req.volume=vol;
    req.type=type; req.price=price; req.sl=NPrice(sl); req.tp=NPrice(tp);
    req.deviation=30; req.magic=MagicNumber; req.type_filling=FillMode();
-   req.comment=(type==ORDER_TYPE_BUY)?"AL_ZOL breakout BUY":"AL_ZOL breakout SELL";
+   req.comment=(type==ORDER_TYPE_BUY)?"AL_ZOL M1 quick BUY":"AL_ZOL M1 quick SELL";
    bool sent=OrderSend(req,res);
-   Print("AL_ZOL ENTRY | type=",EnumToString(type)," sent=",sent,
+   Print("AL_ZOL M1 ENTRY | type=",EnumToString(type)," sent=",sent,
          " retcode=",res.retcode," comment=",res.comment,
-         " ATR=",DoubleToString(atr,_Digits));
+         " spreadPts=",DoubleToString(spreadPrice/point,1),
+         " target=",DoubleToString(targetDist,_Digits),
+         " stop=",DoubleToString(stopDist,_Digits));
    if(sent && (res.retcode==TRADE_RETCODE_DONE ||
                res.retcode==TRADE_RETCODE_PLACED ||
                res.retcode==TRADE_RETCODE_DONE_PARTIAL))
@@ -96,131 +170,29 @@ bool SendEntry(ENUM_ORDER_TYPE type,double atr)
    }
    return false;
 }
-bool ModifyPosition(ulong ticket,double sl,double tp)
-{
-   if(!PositionSelectByTicket(ticket)) return false;
-   MqlTradeRequest req={}; MqlTradeResult res={};
-   req.action=TRADE_ACTION_SLTP; req.symbol=_Symbol; req.position=ticket;
-   req.sl=(sl>0)?NPrice(sl):0; req.tp=(tp>0)?NPrice(tp):0;
-   bool sent=OrderSend(req,res);
-   return sent && res.retcode==TRADE_RETCODE_DONE;
-}
-void ManagePositions(double atr)
-{
-   double point=SymbolInfoDouble(_Symbol,SYMBOL_POINT);
-   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID),ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      ulong ticket=PositionGetTicket(i);
-      if(!ticket || !PositionSelectByTicket(ticket)) continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MagicNumber ||
-         PositionGetString(POSITION_SYMBOL)!=_Symbol) continue;
-      double profit=PositionGetDouble(POSITION_PROFIT);
-      if(MaxLossMoney>0 && profit<=-MaxLossMoney)
-      {
-         // Emergency monetary loss cap; broker SL remains the primary protection.
-         long side=PositionGetInteger(POSITION_TYPE);
-         MqlTradeRequest req={}; MqlTradeResult res={};
-         req.action=TRADE_ACTION_DEAL; req.symbol=_Symbol; req.position=ticket;
-         req.volume=PositionGetDouble(POSITION_VOLUME);
-         req.type=(side==POSITION_TYPE_BUY)?ORDER_TYPE_SELL:ORDER_TYPE_BUY;
-         req.price=(req.type==ORDER_TYPE_BUY)?ask:bid;
-         req.deviation=30; req.magic=MagicNumber; req.type_filling=FillMode();
-         req.comment="AL_ZOL money loss cap";
-         OrderSend(req,res);
-         Print("AL_ZOL LOSS CAP | ticket=",ticket," retcode=",res.retcode);
-         continue;
-      }
-      long side=PositionGetInteger(POSITION_TYPE);
-      double open=PositionGetDouble(POSITION_PRICE_OPEN);
-      double oldSL=PositionGetDouble(POSITION_SL);
-      double tp=PositionGetDouble(POSITION_TP);
-      double initialRisk=MathAbs(open-oldSL);
-      if(initialRisk<=0) continue;
-      double move=(side==POSITION_TYPE_BUY)?bid-open:open-ask;
-      double rNow=move/initialRisk;
-      double newSL=oldSL;
-      if(EnableBreakEven && rNow>=BreakEvenAtR)
-      {
-         double be=(side==POSITION_TYPE_BUY)?open+point*2:open-point*2;
-         if(side==POSITION_TYPE_BUY && be>newSL) newSL=be;
-         if(side==POSITION_TYPE_SELL && (newSL==0 || be<newSL)) newSL=be;
-      }
-      if(rNow>=TrailStartR)
-      {
-         double trail=(side==POSITION_TYPE_BUY)?bid-atr*TrailATRMultiplier:ask+atr*TrailATRMultiplier;
-         if(side==POSITION_TYPE_BUY && trail>newSL) newSL=trail;
-         if(side==POSITION_TYPE_SELL && (newSL==0 || trail<newSL)) newSL=trail;
-      }
-      // Never loosen an existing stop.
-      if(newSL>0 && newSL!=oldSL) ModifyPosition(ticket,newSL,tp);
-   }
-}
-bool NewM1Bar()
-{
-   datetime t=iTime(_Symbol,PERIOD_M1,0);
-   if(t<=0 || t==lastBarTime) return false;
-   lastBarTime=t; return true;
-}
-bool GetATR(double &atr)
-{
-   double a[]; ArraySetAsSeries(a,true);
-   if(CopyBuffer(hATR,0,1,1,a)<1 || a[0]<=0) return false;
-   atr=a[0]; return true;
-}
-bool TrendAllows(bool &up,bool &down)
-{
-   double f[],s[]; ArraySetAsSeries(f,true); ArraySetAsSeries(s,true);
-   if(CopyBuffer(hFast,0,1,1,f)<1 || CopyBuffer(hSlow,0,1,1,s)<1) return false;
-   double c=iClose(_Symbol,PERIOD_M5,1);
-   up=(f[0]>s[0] && c>f[0]);
-   down=(f[0]<s[0] && c<f[0]);
-   return true;
-}
-bool FindRetestSignal(bool &buy,bool &sell,double atr)
-{
-   buy=false; sell=false;
-   MqlRates bars[]; ArraySetAsSeries(bars,true);
-   int need=BreakoutLookback+4;
-   if(CopyRates(_Symbol,PERIOD_M1,1,need,bars)<need) return false;
-   double priorHigh=bars[3].high,priorLow=bars[3].low;
-   for(int i=3;i<BreakoutLookback+3;i++)
-   {
-      priorHigh=MathMax(priorHigh,bars[i].high);
-      priorLow=MathMin(priorLow,bars[i].low);
-   }
-   // bars[2] must break the prior range; bars[1] must retest and reject it.
-   bool brokeUp=bars[2].close>priorHigh && bars[2].close>bars[2].open;
-   bool brokeDown=bars[2].close<priorLow && bars[2].close<bars[2].open;
-   double allowance=atr*RetestATRAllowance;
-   bool retestBuy=(bars[1].low<=priorHigh+allowance &&
-                   bars[1].low>=priorHigh-allowance &&
-                   bars[1].close>priorHigh && bars[1].close>bars[1].open);
-   bool retestSell=(bars[1].high>=priorLow-allowance &&
-                    bars[1].high<=priorLow+allowance &&
-                    bars[1].close<priorLow && bars[1].close<bars[1].open);
-   bool up=false,down=false;
-   if(!TrendAllows(up,down)) return false;
-   buy=brokeUp && retestBuy && up;
-   sell=brokeDown && retestSell && down;
-   return true;
-}
 void OnTick()
 {
    if(!IsGoldSymbol()) return;
-   double atr=0; if(!GetATR(atr)) return;
-   ManagePositions(atr);
+   ManagePositions();
    if(!NewM1Bar()) return;
-   if(MyPositions()>0) return; // one position at a time; no stacking/grid
+   if(MyPositions()>0) return; // one trade at a time; no stacking/grid
    if(TimeCurrent()-lastEntryTime<CooldownSeconds) return;
+
    double point=SymbolInfoDouble(_Symbol,SYMBOL_POINT);
    if(point<=0) return;
-   double spread=(SymbolInfoDouble(_Symbol,SYMBOL_ASK)-SymbolInfoDouble(_Symbol,SYMBOL_BID))/point;
-   if(MaxSpreadPoints>0 && spread>MaxSpreadPoints)
+   double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
+   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   double spreadPrice=ask-bid;
+   double spreadPts=spreadPrice/point;
+   if(MaxSpreadPoints>0 && spreadPts>MaxSpreadPoints)
    {
-      Print("AL_ZOL FILTER | spread too high: ",DoubleToString(spread,1));
+      Print("AL_ZOL FILTER | spread too high: ",DoubleToString(spreadPts,1));
       return;
    }
+   double atr=0,ef=0,es=0,rsi=0,tf=0,ts=0;
+   if(!ReadValue(hATR,1,atr) || atr<=0 ||
+      !ReadValue(hEntryFast,1,ef) || !ReadValue(hEntrySlow,1,es) ||
+      !ReadValue(hRSI,1,rsi)) return;
    double atrPts=atr/point;
    if((MinATRPoints>0 && atrPts<MinATRPoints) ||
       (MaxATRPoints>0 && atrPts>MaxATRPoints))
@@ -228,10 +200,22 @@ void OnTick()
       Print("AL_ZOL FILTER | ATR out of range: ",DoubleToString(atrPts,1));
       return;
    }
-   bool buy=false,sell=false;
-   if(!FindRetestSignal(buy,sell,atr)) return;
-   if(buy) SendEntry(ORDER_TYPE_BUY,atr);
-   else if(sell) SendEntry(ORDER_TYPE_SELL,atr);
+   bool upTrend=true,downTrend=true;
+   if(UseM5TrendFilter)
+   {
+      if(!ReadValue(hTrendFast,1,tf) || !ReadValue(hTrendSlow,1,ts)) return;
+      double m5close=iClose(_Symbol,PERIOD_M5,1);
+      upTrend=(tf>ts && m5close>tf);
+      downTrend=(tf<ts && m5close<tf);
+   }
+   MqlRates c[]; ArraySetAsSeries(c,true);
+   if(CopyRates(_Symbol,PERIOD_M1,1,2,c)<2) return;
+   bool bullish=(c[0].close>c[0].open && c[0].close>ef);
+   bool bearish=(c[0].close<c[0].open && c[0].close<ef);
+   bool buy=(ef>es && rsi>=BuyRSILevel && bullish && upTrend);
+   bool sell=(ef<es && rsi<=SellRSILevel && bearish && downTrend);
+   if(buy) SendEntry(ORDER_TYPE_BUY,atr,spreadPrice);
+   else if(sell) SendEntry(ORDER_TYPE_SELL,atr,spreadPrice);
 }
 int OnInit()
 {
@@ -240,18 +224,29 @@ int OnInit()
       Print("AL_ZOL INIT FAILED | attach to XAUUSD/GOLD chart; current=",_Symbol);
       return INIT_FAILED;
    }
-   hFast=iMA(_Symbol,PERIOD_M5,TrendFastEMA,0,MODE_EMA,PRICE_CLOSE);
-   hSlow=iMA(_Symbol,PERIOD_M5,TrendSlowEMA,0,MODE_EMA,PRICE_CLOSE);
+   hEntryFast=iMA(_Symbol,PERIOD_M1,EntryFastEMA,0,MODE_EMA,PRICE_CLOSE);
+   hEntrySlow=iMA(_Symbol,PERIOD_M1,EntrySlowEMA,0,MODE_EMA,PRICE_CLOSE);
+   hTrendFast=iMA(_Symbol,PERIOD_M5,TrendFastEMA,0,MODE_EMA,PRICE_CLOSE);
+   hTrendSlow=iMA(_Symbol,PERIOD_M5,TrendSlowEMA,0,MODE_EMA,PRICE_CLOSE);
+   hRSI=iRSI(_Symbol,PERIOD_M1,RSIPeriod,PRICE_CLOSE);
    hATR=iATR(_Symbol,PERIOD_M1,ATRPeriod);
-   if(hFast==INVALID_HANDLE || hSlow==INVALID_HANDLE || hATR==INVALID_HANDLE)
+   if(hEntryFast==INVALID_HANDLE || hEntrySlow==INVALID_HANDLE ||
+      hTrendFast==INVALID_HANDLE || hTrendSlow==INVALID_HANDLE ||
+      hRSI==INVALID_HANDLE || hATR==INVALID_HANDLE)
+   {
+      Print("AL_ZOL INIT FAILED | indicator handle error");
       return INIT_FAILED;
-   Print("AL_ZOL v4.00 READY | breakout + retest | M5 trend | M1 entries | no grid");
+   }
+   Print("AL_ZOL v5.00 READY | M1 quick scalping | small target | 0.01 lot | no grid/martingale");
    return INIT_SUCCEEDED;
 }
 void OnDeinit(const int reason)
 {
-   if(hFast!=INVALID_HANDLE) IndicatorRelease(hFast);
-   if(hSlow!=INVALID_HANDLE) IndicatorRelease(hSlow);
+   if(hEntryFast!=INVALID_HANDLE) IndicatorRelease(hEntryFast);
+   if(hEntrySlow!=INVALID_HANDLE) IndicatorRelease(hEntrySlow);
+   if(hTrendFast!=INVALID_HANDLE) IndicatorRelease(hTrendFast);
+   if(hTrendSlow!=INVALID_HANDLE) IndicatorRelease(hTrendSlow);
+   if(hRSI!=INVALID_HANDLE) IndicatorRelease(hRSI);
    if(hATR!=INVALID_HANDLE) IndicatorRelease(hATR);
 }
 //+------------------------------------------------------------------+
